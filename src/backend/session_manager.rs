@@ -14,6 +14,10 @@ impl SessionManager {
         }
     }
 
+    pub fn get_window_ids_by_session_id(&self, session_id: u64) -> Vec<u64> {
+        let session = self.sessions.get(&session_id).unwrap(); //TODO
+        session.windows.clone()
+    }
     pub fn create_session(&mut self, window_id: u64, session_name: String) -> u64 {
         self.last_id += 1;
 

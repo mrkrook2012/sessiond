@@ -23,7 +23,7 @@ pub enum ClientMessage {
         session_id: u64,
     },
     KillWindow {
-        window_id: u64
+        window_id: u64,
     },
     ChangeWindow {
         window_id: u64,
@@ -92,12 +92,17 @@ pub enum ServerMessage {
     TerminalData {
         terminals: Vec<TerminalUpdate>,
     },
+    // First window id is current window
+    OpenedSession {
+        window_ids: Vec<u64>,
+        terminal_id: u64,
+    },
 }
 
 #[derive(Decode, Encode, Debug)]
 pub struct SessionInfo {
-    session_id: u64,
-    session_name: String,
+    pub session_id: u64,
+    pub session_name: String,
 }
 
 impl SessionInfo {

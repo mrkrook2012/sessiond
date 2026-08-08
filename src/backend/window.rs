@@ -1,7 +1,7 @@
 use crate::backend::tree::Node;
 
 pub struct Window {
-    terminals: Vec<u64>,
+    pub terminals: Vec<u64>, // terminal_id
     root: Node,
 }
 

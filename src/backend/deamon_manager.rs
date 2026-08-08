@@ -74,6 +74,27 @@ impl DaemonManager {
         }
     }
 
+    fn handle_open_session(&mut self, session_id: u64) -> ServerMessage {
+        // Get sessions
+        // Get first window in session
+        // get terminals in first window
+        // Add terminals to user setting
+        // Update thread will send data based on user setting.
+        let ids = self
+            .session_manager
+            .get_window_ids_by_session_id(session_id);
+        let window_id = ids.first().unwrap();
+        let terminals = self.window_manager.get_terminals_in_window(*window_id);
+
+        for terminal_id in &terminals {
+            self.user_manager.add_terminal(terminal_id.clone());
+        }
+        let first_terminal = terminals.first().unwrap();
+        ServerMessage::OpenedSession {
+            window_ids: ids,
+            terminal_id: *first_terminal,
+        }
+    }
     fn handle_start(&mut self, rows: u16, cols: u16) -> ServerMessage {
         // Add user information
         // Create terminal

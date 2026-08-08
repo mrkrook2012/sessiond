@@ -21,4 +21,8 @@ impl WindowManager {
         self.windows.insert(self.last_id.clone(), window);
         self.last_id
     }
+
+    pub fn get_terminals_in_window(&self, window_id: u64) -> Vec<u64> {
+        self.windows.get(&window_id).unwrap().terminals.clone()   
+    }
 }

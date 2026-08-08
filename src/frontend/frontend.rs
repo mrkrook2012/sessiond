@@ -77,6 +77,10 @@ pub fn run_frontend() -> Result<()> {
             ServerMessage::ListedSessions { sessions } => todo!(),
             ServerMessage::CreatedTerminal { terminal_id } => todo!(),
             ServerMessage::TerminalData { terminals } => {} // Ignore in cause of out of order
+            ServerMessage::OpenedSession {
+                window_ids,
+                terminal_id,
+            } => todo!(),
         }
     }
 
@@ -117,6 +121,10 @@ pub fn run_frontend() -> Result<()> {
                             .update_screen(data.data.as_slice());
                     }
                 }
+                ServerMessage::OpenedSession {
+                    window_ids,
+                    terminal_id,
+                } => todo!(),
             }
         }
     });
@@ -224,25 +232,5 @@ pub fn run_frontend() -> Result<()> {
     }
     disable_raw_mode()?;
     execute!(std::io::stdout(), Show, LeaveAlternateScreen)?;
-
-    // match stream {
-    //     Ok(stream) => {
-    //         let reader = BufReader::new(stream);
-    //         for line in reader.lines() {
-    //             match line {
-    //                 Ok(line) => {
-    //                     println!("Got message {}", line)
-    //                 }
-    //                 Err(e) => {
-    //                     eprintln!("Got error {}", e)
-    //                 }
-    //             }
-    //         }
-    //     }
-    //     Err(e) => {
-    //         eprintln!("Error connecting to socket from client, {}", e);
-    //     }
-    // }
-
     Ok(())
 }
