@@ -53,6 +53,10 @@ impl TerminalManager {
         term.resize(rows, cols);
     }
 
+    pub fn kill_terminal(&mut self, terminal_id: u64) {
+        self.terminals.remove(&terminal_id).unwrap();
+    }
+
     pub fn create_terminal(&mut self, rows: u16, cols: u16) -> u64 {
         self.last_id += 1;
 

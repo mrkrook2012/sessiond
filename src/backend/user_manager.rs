@@ -92,6 +92,10 @@ impl UserManager {
         Ok(())
     }
 
+    pub fn clear_terminals(&mut self) {
+        self.visible_terminals.clear();
+    }
+
     pub fn get_visible_terminals(&self, user_id: u64) -> Result<&[u64], UserManagerError> {
         if !self.has_user(user_id) {
             return Err(UserManagerError::UserNotFound(user_id));

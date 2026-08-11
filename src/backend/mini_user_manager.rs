@@ -1,7 +1,7 @@
 pub struct MiniUserManager {
     rows: u16,
     cols: u16,
-    current_session: u64,
+    current_session_id: u64,
     visible_terminals: Vec<u64>, //Terminal Id
 }
 
@@ -10,7 +10,7 @@ impl MiniUserManager {
         Self {
             rows: 0,
             cols: 0,
-            current_session: 0,
+            current_session_id: 0,
             visible_terminals: Vec::new(),
         }
     }
@@ -39,6 +39,17 @@ impl MiniUserManager {
         {
             self.visible_terminals.remove(pos);
         }
+    }
+    pub fn get_current_session_id(&self) -> u64 {
+        self.current_session_id
+    }
+
+    pub fn set_current_session_id(&mut self, session_id: u64) {
+        self.current_session_id = session_id
+    }
+
+    pub fn clear_all(&mut self) {
+        self.visible_terminals.clear()
     }
 
     pub fn get_all_terminals(&self) -> Vec<u64> {

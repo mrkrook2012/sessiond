@@ -49,7 +49,7 @@ impl DaemonManager {
                 command,
                 session_name,
             } => self.handle_create_session(working_dir, command, session_name),
-            ClientMessage::ExitSession => todo!(),
+            ClientMessage::ExitSession => self.handle_exit_session(),
             ClientMessage::KillSession => todo!(),
             ClientMessage::CreateTerminal {
                 start_terminal_id: _,
@@ -62,16 +62,87 @@ impl DaemonManager {
                 shrink_terminal_id: _,
                 percent: _,
             } => todo!(),
-            ClientMessage::KillTerminal { terminal_id: _ } => todo!(),
+            ClientMessage::KillTerminal { terminal_id } => self.handle_kill_terminal(terminal_id),
             ClientMessage::WriteTerminal { terminal_id, data } => {
                 self.handle_write(terminal_id, data)
             }
             ClientMessage::ListSessions {} => self.handle_list_sessions(),
-            ClientMessage::CreateWindow { session_id } => todo!(),
-            ClientMessage::OpenSession { session_id } => todo!(),
-            ClientMessage::ChangeWindow { window_id } => todo!(),
-            ClientMessage::KillWindow { window_id } => todo!(),
+            ClientMessage::CreateWindow { session_id } => self.handle_create_window(session_id),
+            ClientMessage::OpenSession { session_id } => self.handle_open_session(session_id),
+            ClientMessage::ChangeWindow { window_id } => self.handle_change_window(window_id),
+            ClientMessage::KillWindow { window_id } => self.handle_kill_window(window_id),
         }
+    }
+    fn handle_change_window(&mut self, window_id: u64) -> ServerMessage {
+        self.user_manager.clear_all();
+        let terminal_ids = self.window_manager.get_terminals_in_window(window_id);
+        for terminal_id in terminal_ids {
+            self.user_manager.add_terminal(terminal_id);
+        }
+        Ok
+    }
+
+    fn handle_kill_terminal(&mut self, terminal_id: u64) -> ServerMessage {
+        // Kill the terminal,
+        // Kill any windows or even sessions if they're now empty
+        self.terminal_manager.kill_terminal(terminal_id);
+        self.user_manager.remove_terminal(terminal_id);
+        let window_id = self.window_manager.get_window_id_from_terminal(terminal_id);
+        self.window_manager
+            .remove_terminal_from_window(window_id, terminal_id);
+        let terminal_ids = self.window_manager.get_terminals_in_window(window_id);
+        if terminal_ids.len() == 0 {
+            // Just removed the last terminal in the window, remove window from sess
+            let session_id = self.session_manager.get_session_id_from_window(window_id);
+            self.session_manager.remove_window_from_session(window_id);
+            let remaining_windows = self
+                .session_manager
+                .get_all_windows_from_session(session_id);
+            if remaining_windows.len() == 0 {
+                // This was last terminal in last window, kill the session
+                self.session_manager.kill_session(session_id);
+            }
+        }
+        Ok
+    }
+
+    fn handle_kill_window(&mut self, window_id: u64) -> ServerMessage {
+        let session_id = self.session_manager.get_session_id_from_window(window_id);
+
+        let terminals = self.window_manager.get_terminals_in_window(window_id);
+        for terminal_id in terminals {
+            self.terminal_manager.kill_terminal(terminal_id);
+            self.user_manager.remove_terminal(terminal_id);
+        }
+        let remaining_windows = self
+            .session_manager
+            .get_all_windows_from_session(session_id);
+
+        if remaining_windows.len() == 0 {
+            // This was last terminal in last window, kill the session
+            self.session_manager.kill_session(session_id);
+        }
+        Ok
+    }
+
+    fn handle_create_window(&mut self, session_id: u64) -> ServerMessage {
+        // Create new terminal
+        // Add new terminal to window manager
+        // Switch to new window
+        let (rows, cols) = self.user_manager.get_dimensions();
+        let terminal_id = self.terminal_manager.create_terminal(rows, cols);
+        let window_id = self.window_manager.create_window(terminal_id);
+        self.session_manager
+            .add_window_to_session(session_id, window_id);
+        self.user_manager.clear_all();
+        self.user_manager.add_terminal(terminal_id);
+        Ok
+    }
+
+    fn handle_exit_session(&mut self) -> ServerMessage {
+        // Exiting is just stopping sending.
+        self.user_manager.clear_all();
+        Ok
     }
 
     fn handle_open_session(&mut self, session_id: u64) -> ServerMessage {
@@ -97,9 +168,6 @@ impl DaemonManager {
     }
     fn handle_start(&mut self, rows: u16, cols: u16) -> ServerMessage {
         // Add user information
-        // Create terminal
-        // Add terminal to wanted list <-- TEMP TODO
-        // Create window for terminal
         self.user_manager.add_user(rows, cols);
         crate::ipc::protocol::ServerMessage::Ok
     }
