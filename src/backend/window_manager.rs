@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::backend::{window::{self, Window}, window_manager};
+use crate::{backend::{window::{self, Window}, window_manager}, ipc::protocol::WindowInfo};
 
 pub struct WindowManager {
     last_id: u64,
@@ -17,7 +17,7 @@ impl WindowManager {
 
     pub fn create_window(&mut self, terminal_id: u64) -> u64 {
         self.last_id += 1;
-        let window = Window::new(terminal_id);
+        let window = Window::new(terminal_id, self.last_id);
         self.windows.insert(self.last_id.clone(), window);
         self.last_id
     }
@@ -41,5 +41,20 @@ impl WindowManager {
             }
         }
         0
+    }
+
+    pub fn get_window_info_by_id(&self, window_id: u64) -> WindowInfo {
+        let window = self.get_window_by_id(window_id);
+        
+        WindowInfo::new(
+            window_id,
+            "Penar".to_string(),
+            window.get_window_layout()
+        )
+    }
+
+    pub fn get_window_by_id(&self, window_id: u64) -> &Window {
+        self.windows.get(&window_id).unwrap()
+
     }
 }

@@ -1,4 +1,7 @@
-use crate::ipc::protocol::SessionInfo;
+use crate::{
+    backend::window_manager::WindowManager,
+    ipc::protocol::{SessionInfo, WindowInfo},
+};
 use std::{collections::HashMap, vec};
 
 pub struct SessionManager {
@@ -21,9 +24,16 @@ impl SessionManager {
 
     pub fn remove_window_from_session(&mut self, window_id: u64) {
         let session_id = self.get_session_id_from_window(window_id);
-        self.sessions.get_mut(&session_id).unwrap().windows.retain(|&id| id != window_id)
+        self.sessions
+            .get_mut(&session_id)
+            .unwrap()
+            .windows
+            .retain(|&id| id != window_id)
     }
 
+    pub fn get_session_name_by_id(&self, session_id: u64) -> String {
+        "Penar".to_string()
+    }
     pub fn get_all_windows_from_session(&self, session_id: u64) -> Vec<u64> {
         self.get_session_by_id(session_id).windows.clone()
     }
@@ -43,11 +53,11 @@ impl SessionManager {
     }
     pub fn get_session_id_from_window(&self, window_id: u64) -> u64 {
         for (id, session) in &self.sessions {
-            if session.windows.contains(&window_id){
+            if session.windows.contains(&window_id) {
                 return *id;
             }
         }
-        return 0
+        return 0;
     }
     pub fn add_window_to_session(&mut self, session_id: u64, window_id: u64) {
         let session = self.get_session_by_id_mut(session_id);
@@ -60,11 +70,8 @@ impl SessionManager {
     fn get_session_by_id_mut(&mut self, session_id: u64) -> &mut Session {
         self.sessions.get_mut(&session_id).unwrap()
     }
-    pub fn list_sessions(&self) -> Vec<SessionInfo> {
-        self.sessions
-            .iter()
-            .map(|(id, session)| SessionInfo::new(*id, session.session_name.clone()))
-            .collect()
+    pub fn list_sessions(&self) -> Vec<&Session> {
+        self.sessions.values().collect()
     }
 
     pub fn kill_session(&mut self, session_id: u64) {
@@ -73,7 +80,7 @@ impl SessionManager {
 }
 
 pub struct Session {
-    session_id: u64,
-    session_name: String,
-    windows: Vec<u64>, // window_id
+    pub session_id: u64,
+    pub session_name: String,
+    pub windows: Vec<u64>, // window_id
 }

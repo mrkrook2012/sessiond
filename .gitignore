@@ -3,3 +3,4 @@ frontend_recv_tread.out
 daemon.out
 frontend.log
 daemon.err
+frontend_recv_thread.out

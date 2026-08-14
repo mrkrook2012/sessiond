@@ -50,7 +50,7 @@ impl DaemonManager {
                 session_name,
             } => self.handle_create_session(working_dir, command, session_name),
             ClientMessage::ExitSession => self.handle_exit_session(),
-            ClientMessage::KillSession => todo!(),
+            ClientMessage::KillSession { session_id } => self.handle_kill_session(session_id),
             ClientMessage::CreateTerminal {
                 start_terminal_id: _,
                 split_type: _,
@@ -78,6 +78,26 @@ impl DaemonManager {
         let terminal_ids = self.window_manager.get_terminals_in_window(window_id);
         for terminal_id in terminal_ids {
             self.user_manager.add_terminal(terminal_id);
+        }
+        Ok
+    }
+
+    fn handle_kill_session(&mut self, session_id: u64) -> ServerMessage {
+        // This command will only be given from the list selection
+        let mut terminal_ids: Vec<u64> = Vec::new();
+        let windows = self
+            .session_manager
+            .get_all_windows_from_session(session_id);
+        for window_id in windows {
+            terminal_ids.append(
+                self.window_manager
+                    .get_terminals_in_window(window_id)
+                    .as_mut(),
+            );
+        }
+
+        for terminal_id in terminal_ids {
+            self.terminal_manager.kill_terminal(terminal_id);
         }
         Ok
     }
@@ -160,12 +180,14 @@ impl DaemonManager {
         for terminal_id in &terminals {
             self.user_manager.add_terminal(terminal_id.clone());
         }
-        let first_terminal = terminals.first().unwrap();
-        ServerMessage::OpenedSession {
-            window_ids: ids,
-            terminal_id: *first_terminal,
-        }
+        let session_info = self
+            .get_all_session_info()
+            .into_iter()
+            .find(|info| info.session_id == session_id)
+            .unwrap();
+        ServerMessage::OpenedSession { session_info }
     }
+
     fn handle_start(&mut self, rows: u16, cols: u16) -> ServerMessage {
         // Add user information
         self.user_manager.add_user(rows, cols);
@@ -204,16 +226,38 @@ impl DaemonManager {
             .session_manager
             .create_session(window_id, session_name.clone());
         self.user_manager.add_terminal(terminal_id);
-        ServerMessage::CreatedSession {
-            session_info: SessionInfo::new(session_id, session_name),
-            window_id: window_id,
-            terminal_id: terminal_id,
-        }
+
+        return Ok;
+        // ServerMessage::CreatedSession {
+        //     session_info: SessionInfo::new(session_id, session_name),
+        //     window_id: window_id,
+        //     terminal_id: terminal_id,
     }
 
+    fn get_all_session_info(&self) -> Vec<SessionInfo> {
+        self.session_manager
+            .list_sessions()
+            .iter()
+            .map(|session| {
+                SessionInfo::new(
+                    session.session_id,
+                    session.session_name.clone(),
+                    session
+                        .windows
+                        .iter()
+                        .map(|window_id| {
+                            self.window_manager
+                                .get_window_by_id(*window_id)
+                                .get_window_info()
+                        })
+                        .collect(),
+                )
+            })
+            .collect()
+    }
     fn handle_list_sessions(&self) -> ServerMessage {
         ServerMessage::ListedSessions {
-            sessions: self.session_manager.list_sessions(),
+            sessions: self.get_all_session_info(),
         }
     }
 }

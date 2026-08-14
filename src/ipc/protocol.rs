@@ -1,6 +1,9 @@
 use bincode_next::{Decode, Encode};
 
-use crate::backend::{session_manager::Session, tree::SplitDirection};
+use crate::backend::{
+    session_manager::Session,
+    tree::{Node, SplitDirection},
+};
 
 #[derive(Decode, Encode, Debug)]
 pub enum ClientMessage {
@@ -40,7 +43,9 @@ pub enum ClientMessage {
     },
     ListSessions,
     ExitSession,
-    KillSession,
+    KillSession {
+        session_id: u64,
+    },
 
     // Reserved for manual terminal creation
     CreateTerminal {
@@ -80,22 +85,20 @@ pub enum ServerMessage {
     // TODO ChangedWindow message that returns the layout with terminal_ids
     CreatedSession {
         session_info: SessionInfo,
-        window_id: u64,
-        terminal_id: u64,
     },
     ListedSessions {
         sessions: Vec<SessionInfo>,
     },
     CreatedTerminal {
         terminal_id: u64,
+        new_layout: Node,
     },
     TerminalData {
         terminals: Vec<TerminalUpdate>,
     },
     // First window id is current window
     OpenedSession {
-        window_ids: Vec<u64>,
-        terminal_id: u64,
+        session_info: SessionInfo,
     },
 }
 
@@ -103,13 +106,28 @@ pub enum ServerMessage {
 pub struct SessionInfo {
     pub session_id: u64,
     pub session_name: String,
+    pub windows_info: Vec<WindowInfo>,
+}
+
+#[derive(Decode, Encode, Debug)]
+pub struct WindowInfo {
+    pub window_id: u64,
+    pub window_name: String,
+    pub layout: Node,
+}
+
+impl WindowInfo {
+    pub fn new(window_id: u64, window_name: String, layout: Node) -> Self {
+        Self { window_id, window_name, layout }
+    }
 }
 
 impl SessionInfo {
-    pub fn new(session_id: u64, session_name: String) -> Self {
+    pub fn new(session_id: u64, session_name: String, windows_info: Vec<WindowInfo>) -> Self {
         Self {
             session_id,
             session_name,
+            windows_info,
         }
     }
 }

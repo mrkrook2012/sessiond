@@ -1,6 +1,7 @@
 use std::io::{self, Write};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use std::fs::File;
@@ -59,40 +60,77 @@ pub async fn run_daemon() -> Result<()> {
         window_manager,
         session_manager,
     )));
-    let update_daemon_manager = Arc::clone(&daemon_manager);
 
     let listener = ListenerOptions::new()
         .name(socket_name())
         .create_sync()
         .unwrap();
 
-    let conn = listener.accept().unwrap();
-    let (sender, mut reciever) = IpcConnection::new(conn).split().unwrap();
-    let safe_sender = Arc::new(Mutex::new(sender));
-
-    let update_daemon_manager = Arc::clone(&daemon_manager);
-    let update_sender = Arc::clone(&safe_sender);
-
-    std::thread::spawn(move || {
-        loop {
-            std::thread::sleep(Duration::from_millis(16));
-
-            let data = update_daemon_manager.lock().unwrap().get_wanted_data();
-
-            println!("Sending {:?}", data);
-
-            update_sender.lock().unwrap().send(&data).unwrap();
-        }
-    });
-
+    // Outer loop: accept new clients forever, daemon_manager survives across all of them
     loop {
-        let client_message: ClientMessage = reciever.recv().unwrap();
+        let conn = match listener.accept() {
+            Ok(conn) => conn,
+            Err(e) => {
+                eprintln!("Failed to accept connection: {}", e);
+                continue;
+            }
+        };
 
-        let response = daemon_manager
-            .lock()
-            .unwrap()
-            .process_message(client_message);
+        let (sender, mut receiver) = match IpcConnection::new(conn).split() {
+            Ok(pair) => pair,
+            Err(e) => {
+                eprintln!("Failed to split connection: {}", e);
+                continue;
+            }
+        };
 
-        safe_sender.lock().unwrap().send(&response).unwrap();
+        let safe_sender = Arc::new(Mutex::new(sender));
+
+        // Flag so the update thread knows to stop once this client is gone
+        let running = Arc::new(AtomicBool::new(true));
+
+        let update_daemon_manager = Arc::clone(&daemon_manager);
+        let update_sender = Arc::clone(&safe_sender);
+        let update_running = Arc::clone(&running);
+
+        let update_handle = std::thread::spawn(move || {
+            while update_running.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(16));
+
+                let data = update_daemon_manager.lock().unwrap().get_wanted_data();
+
+                if update_sender.lock().unwrap().send(&data).is_err() {
+                    // client is gone, stop trying
+                    break;
+                }
+            }
+        });
+
+        // Inner loop: serve this one client until it disconnects
+        loop {
+            let client_message: ClientMessage = match receiver.recv() {
+                Ok(msg) => msg,
+                Err(e) => {
+                    eprintln!("Client disconnected: {}", e);
+                    break;
+                }
+            };
+            println!("Recieved Message: {:?}", client_message);
+
+            let response = daemon_manager
+                .lock()
+                .unwrap()
+                .process_message(client_message);
+            println!("Responded: {:?}", response);
+            if safe_sender.lock().unwrap().send(&response).is_err() {
+                eprintln!("Failed to send response, client likely disconnected");
+                break;
+            }
+        }
+
+        running.store(false, Ordering::Relaxed);
+        let _ = update_handle.join();
+
+        println!("Client disconnected, waiting for next connection");
     }
 }
