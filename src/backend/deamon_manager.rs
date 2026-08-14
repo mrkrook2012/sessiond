@@ -99,7 +99,8 @@ impl DaemonManager {
         for terminal_id in terminal_ids {
             self.terminal_manager.kill_terminal(terminal_id);
         }
-        Ok
+        let sessions = self.get_all_session_info();
+        ServerMessage::ListedSessions { sessions }
     }
 
     fn handle_kill_terminal(&mut self, terminal_id: u64) -> ServerMessage {
@@ -111,6 +112,7 @@ impl DaemonManager {
         self.window_manager
             .remove_terminal_from_window(window_id, terminal_id);
         let terminal_ids = self.window_manager.get_terminals_in_window(window_id);
+        let mut killed_session = false;
         if terminal_ids.len() == 0 {
             // Just removed the last terminal in the window, remove window from sess
             let session_id = self.session_manager.get_session_id_from_window(window_id);
@@ -121,8 +123,13 @@ impl DaemonManager {
             if remaining_windows.len() == 0 {
                 // This was last terminal in last window, kill the session
                 self.session_manager.kill_session(session_id);
+                killed_session = true;
             }
         }
+        if killed_session {
+            return ServerMessage::ListedSessions { sessions: self.get_all_session_info() }
+        }
+        ServerMessage::
         Ok
     }
 
@@ -137,12 +144,16 @@ impl DaemonManager {
         let remaining_windows = self
             .session_manager
             .get_all_windows_from_session(session_id);
-
+        let mut killed_session = false;
         if remaining_windows.len() == 0 {
             // This was last terminal in last window, kill the session
             self.session_manager.kill_session(session_id);
+            killed_session = true;
         }
-        Ok
+        if killed_session {
+            return ServerMessage::ListedSessions { sessions: self.get_all_session_info() }
+        }
+        ServerMessage::UpdatedSession { session_info: self.get_session_info_by_id(self.session_manager.get_session_id_from_window(window_id)) }
     }
 
     fn handle_create_window(&mut self, session_id: u64) -> ServerMessage {
@@ -156,7 +167,7 @@ impl DaemonManager {
             .add_window_to_session(session_id, window_id);
         self.user_manager.clear_all();
         self.user_manager.add_terminal(terminal_id);
-        Ok
+        ServerMessage::UpdatedSession { session_info: self.get_session_info_by_id(session_id) }
     }
 
     fn handle_exit_session(&mut self) -> ServerMessage {
@@ -185,7 +196,7 @@ impl DaemonManager {
             .into_iter()
             .find(|info| info.session_id == session_id)
             .unwrap();
-        ServerMessage::OpenedSession { session_info }
+        ServerMessage::UpdatedSession { session_info }
     }
 
     fn handle_start(&mut self, rows: u16, cols: u16) -> ServerMessage {
@@ -227,11 +238,7 @@ impl DaemonManager {
             .create_session(window_id, session_name.clone());
         self.user_manager.add_terminal(terminal_id);
 
-        return Ok;
-        // ServerMessage::CreatedSession {
-        //     session_info: SessionInfo::new(session_id, session_name),
-        //     window_id: window_id,
-        //     terminal_id: terminal_id,
+        ServerMessage::UpdatedSession { session_info: self.get_session_info_by_id(session_id) }
     }
 
     fn get_all_session_info(&self) -> Vec<SessionInfo> {
@@ -254,6 +261,17 @@ impl DaemonManager {
                 )
             })
             .collect()
+    }
+    fn get_session_info_by_id(&self, session_id: u64) -> SessionInfo{
+        let session = self.session_manager.get_session_by_id(session_id);
+        SessionInfo::new(
+            session_id, 
+            session.session_name.clone(), 
+            session.windows.iter().map(|window_id| {
+                self.window_manager.get_window_by_id(*window_id)
+                .get_window_info()
+            }).collect()
+        )
     }
     fn handle_list_sessions(&self) -> ServerMessage {
         ServerMessage::ListedSessions {

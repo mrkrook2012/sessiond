@@ -36,7 +36,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs};
 
-use crate::backend::tree::Node;
 use crate::frontend::slop_terrm_widget::TerminalWidget;
 use crate::ipc::consts::socket_name;
 use crate::ipc::ipc_connection::IpcConnection;
@@ -124,6 +123,11 @@ pub fn run_frontend() -> Result<()> {
 
     enable_raw_mode().unwrap();
     execute!(std::io::stdout(), EnterAlternateScreen)?;
+    // EnterAlternateScreen doesn't guarantee the buffer is actually blank
+    // (depends on the terminal emulator, and a prior crashed run can leave
+    // stale content behind). Force a full clear + redraw so the session
+    // list never shows leftover terminal output underneath it.
+    terminal.clear()?;
 
     let stream = LocalSocketStream::connect(socket_name()).unwrap();
     let (mut sender, mut receiver) = IpcConnection::new(stream).split().unwrap();
@@ -168,44 +172,49 @@ pub fn run_frontend() -> Result<()> {
                 ServerMessage::Pong => {}
                 ServerMessage::Started => {}
 
-                ServerMessage::CreatedWindow {
-                    window_id,
-                    terminal_id,
-                } => {
-                    if let Some(session) = st.current_session.as_mut() {
-                        let idx = session.windows_info.len();
-                        session.windows_info.push(WindowInfo::new(
-                            window_id,
-                            format!("win{idx}"),
-                            Node::Leaf(terminal_id),
-                        ));
-                        st.current_window_index = idx;
-                    }
-                }
-
-                ServerMessage::CreatedSession { session_info } => {
+                // Covers session creation, session open, and every
+                // structural change within a session (window/terminal
+                // create/kill/resize) - the server just hands back the
+                // authoritative SessionInfo each time.
+                ServerMessage::UpdatedSession { session_info } => {
+                    let len = session_info.windows_info.len();
                     st.current_session = Some(session_info);
-                    st.current_window_index = 0;
+                    st.current_window_index = if len == 0 {
+                        0
+                    } else {
+                        st.current_window_index.min(len - 1)
+                    };
                     st.screen = Screen::Terminal;
-                    st.status = "Session created".to_owned();
+                    st.status = "Session updated".to_owned();
                 }
 
+                // Sent for the plain session-list screen, but per the
+                // protocol comment it's *also* sent instead of
+                // UpdatedSession when a session disappears entirely (e.g.
+                // its last window/terminal was killed). So: refresh the
+                // list, and if the session we're currently viewing isn't
+                // in it anymore, fall back to the list screen.
                 ServerMessage::ListedSessions { sessions } => {
                     st.sessions = sessions;
                     if st.session_list_index >= st.sessions.len() {
                         st.session_list_index = st.sessions.len().saturating_sub(1);
                     }
-                }
 
-                ServerMessage::CreatedTerminal {
-                    terminal_id: _,
-                    new_layout,
-                } => {
-                    let idx = st.current_window_index;
-                    if let Some(session) = st.current_session.as_mut() {
-                        if let Some(window) = session.windows_info.get_mut(idx) {
-                            window.layout = new_layout;
-                        }
+                    let current_still_alive = st
+                        .current_session
+                        .as_ref()
+                        .map(|current| {
+                            st.sessions
+                                .iter()
+                                .any(|listed| listed.session_id == current.session_id)
+                        })
+                        .unwrap_or(true);
+
+                    if !current_still_alive {
+                        st.current_session = None;
+                        st.current_window_index = 0;
+                        st.screen = Screen::SessionList;
+                        st.status = "Session closed".to_owned();
                     }
                 }
 
@@ -216,13 +225,6 @@ pub fn run_frontend() -> Result<()> {
                             st.terminal_widget.update_screen(update.data.as_slice());
                         }
                     }
-                }
-
-                ServerMessage::OpenedSession { session_info } => {
-                    st.current_session = Some(session_info);
-                    st.current_window_index = 0;
-                    st.screen = Screen::Terminal;
-                    st.status = "Session opened".to_owned();
                 }
             }
         }

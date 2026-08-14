@@ -77,29 +77,12 @@ pub enum ServerMessage {
     Ok,
     Pong,
     Started,
-    CreatedWindow {
-        window_id: u64,
-        terminal_id: u64,
-    },
+    UpdatedSession {session_info: SessionInfo},
 
-    // TODO ChangedWindow message that returns the layout with terminal_ids
-    CreatedSession {
-        session_info: SessionInfo,
-    },
-    ListedSessions {
-        sessions: Vec<SessionInfo>,
-    },
-    CreatedTerminal {
-        terminal_id: u64,
-        new_layout: Node,
-    },
-    TerminalData {
-        terminals: Vec<TerminalUpdate>,
-    },
-    // First window id is current window
-    OpenedSession {
-        session_info: SessionInfo,
-    },
+    // This will be returned from a list sessions, and later change names, stop restart ect 
+    // but also if you kill the last terminal, window or just kill a session
+    ListedSessions { sessions: Vec<SessionInfo> },
+    TerminalData { terminals: Vec<TerminalUpdate> },
 }
 
 #[derive(Decode, Encode, Debug)]
@@ -118,7 +101,11 @@ pub struct WindowInfo {
 
 impl WindowInfo {
     pub fn new(window_id: u64, window_name: String, layout: Node) -> Self {
-        Self { window_id, window_name, layout }
+        Self {
+            window_id,
+            window_name,
+            layout,
+        }
     }
 }
 

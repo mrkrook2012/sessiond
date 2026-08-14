@@ -38,6 +38,10 @@ impl SessionManager {
         self.get_session_by_id(session_id).windows.clone()
     }
 
+    pub fn does_session_exist(&self, session_id: u64) -> bool {
+        self.sessions.contains_key(&session_id)
+    }
+
     pub fn create_session(&mut self, window_id: u64, session_name: String) -> u64 {
         self.last_id += 1;
 
@@ -64,9 +68,10 @@ impl SessionManager {
         session.windows.push(window_id);
     }
 
-    fn get_session_by_id(&self, session_id: u64) -> &Session {
+    pub fn get_session_by_id(&self, session_id: u64) -> &Session {
         self.sessions.get(&session_id).unwrap()
     }
+
     fn get_session_by_id_mut(&mut self, session_id: u64) -> &mut Session {
         self.sessions.get_mut(&session_id).unwrap()
     }
