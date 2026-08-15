@@ -35,6 +35,13 @@ impl TerminalManager {
         }
     }
 
+    pub fn resize_all_terminals(&mut self, rows: u16, cols: u16) {
+        for (terminal_id, terminal) in &mut self.terminals {
+            terminal.set_global_size(rows, cols);
+            terminal.recalculate_size();
+        }
+    }
+
     pub fn send_bytes_to_terminal(&mut self, terminal_id: u64, bytes: &[u8]) {
         self.get_terminal_from_id_mut(terminal_id)
             .process_input(bytes);
@@ -43,14 +50,6 @@ impl TerminalManager {
     pub fn execute_command_on_terminal(&mut self, terminal_id: u64, command: String) {
         self.get_terminal_from_id_mut(terminal_id)
             .execute_command(command);
-    }
-
-    pub fn resize_terminal(&mut self, terminal_id: u64, rows: u16, cols: u16) {
-        let term = self
-            .terminals
-            .get_mut(&terminal_id)
-            .expect("Id should have term");
-        term.resize(rows, cols);
     }
 
     pub fn kill_terminal(&mut self, terminal_id: u64) {

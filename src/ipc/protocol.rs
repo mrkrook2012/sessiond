@@ -32,6 +32,11 @@ pub enum ClientMessage {
         window_id: u64,
     },
 
+    RenameWindow {
+        window_id: u64,
+        name: String,
+    },
+
     // Is the start command, will start a session with 1 terminal running shell
     CreateSession {
         working_dir: String,
@@ -55,13 +60,6 @@ pub enum ClientMessage {
         command: Option<String>,
     },
 
-    // Resize by dragging, resizes due to opening/closing are calculated
-    ResizeTerminal {
-        expand_terminal_id: u64,
-        shrink_terminal_id: u64,
-        percent: f32,
-    },
-
     KillTerminal {
         terminal_id: u64,
     },
@@ -77,9 +75,9 @@ pub enum ServerMessage {
     Ok,
     Pong,
     Started,
-    UpdatedSession {session_info: SessionInfo},
+    UpdatedSession { session_info: SessionInfo },
 
-    // This will be returned from a list sessions, and later change names, stop restart ect 
+    // This will be returned from a list sessions, and later change names, stop restart ect
     // but also if you kill the last terminal, window or just kill a session
     ListedSessions { sessions: Vec<SessionInfo> },
     TerminalData { terminals: Vec<TerminalUpdate> },

@@ -4,18 +4,23 @@ use std::sync::Mutex;
 use vt100::Parser;
 
 pub struct VirtualTerminal {
+    id: u64,
     parser: Arc<Mutex<Parser>>,
     pair: PtyPair, // master and slave of Pty
     writer: Box<dyn std::io::Write + Send>,
+    width_factor: f32,
+    height_factor: f32,
+    global_rows: u16,
+    global_cols: u16,
 }
 
 impl VirtualTerminal {
-    pub fn new(id: u64, rows: u16, cols: u16) -> Self {
+    pub fn new(id: u64, global_rows: u16, global_cols: u16) -> Self {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
-                rows: rows,
-                cols: cols,
+                rows: global_rows,
+                cols: global_cols,
                 pixel_height: 0,
                 pixel_width: 0,
             })
@@ -24,7 +29,7 @@ impl VirtualTerminal {
             .spawn_command(CommandBuilder::new("/bin/bash"))
             .unwrap();
         let writer = pair.master.take_writer().unwrap();
-        let parser = Arc::new(Mutex::new(Parser::new(rows, cols, 0)));
+        let parser = Arc::new(Mutex::new(Parser::new(global_rows, global_cols, 0)));
 
         // TODO
         // Temporary workaround, this should be owned seperately
@@ -49,10 +54,19 @@ impl VirtualTerminal {
         });
 
         Self {
+            id: id,
             parser: parser,
             pair: pair,
             writer: writer,
+            width_factor: 1.0,
+            height_factor: 1.0,
+            global_rows,
+            global_cols,
         }
+    }
+
+    pub fn get_id(&self) -> u64 {
+        self.id
     }
 
     pub fn process_input(&mut self, bytes: &[u8]) {
@@ -68,7 +82,27 @@ impl VirtualTerminal {
         self.parser.lock().unwrap().screen().state_formatted()
     }
 
-    pub fn resize(&mut self, rows: u16, cols: u16) {
+    pub fn recalculate_size(&mut self) {
+        self.set_size(
+            self.global_rows / self.height_factor as u16,
+            self.global_cols / self.width_factor as u16,
+        );
+    }
+
+    pub fn set_global_size(&mut self, rows: u16, cols: u16) {
+        self.global_rows = rows;
+        self.global_cols = cols;
+    }
+
+    pub fn get_ratio(&self) -> (f32, f32) {
+        (self.height_factor, self.width_factor)
+    }
+    pub fn set_ratio(&mut self, height_factor: f32, width_factor: f32) {
+        self.height_factor = height_factor;
+        self.width_factor = width_factor
+    }
+
+    fn set_size(&mut self, rows: u16, cols: u16) {
         self.parser
             .lock()
             .unwrap()

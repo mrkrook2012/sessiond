@@ -43,7 +43,9 @@ impl DaemonManager {
         match client_message {
             ClientMessage::Ping => ServerMessage::Pong,
             ClientMessage::Start { rows, cols } => self.handle_start(rows, cols),
-            ClientMessage::UpdateScreenSize { rows: _, cols: _ } => todo!(),
+            ClientMessage::UpdateScreenSize { rows, cols } => {
+                self.handle_update_screen_size(rows, cols)
+            }
             ClientMessage::CreateSession {
                 working_dir,
                 command,
@@ -57,11 +59,6 @@ impl DaemonManager {
                 working_dir: _,
                 command: _,
             } => todo!(),
-            ClientMessage::ResizeTerminal {
-                expand_terminal_id: _,
-                shrink_terminal_id: _,
-                percent: _,
-            } => todo!(),
             ClientMessage::KillTerminal { terminal_id } => self.handle_kill_terminal(terminal_id),
             ClientMessage::WriteTerminal { terminal_id, data } => {
                 self.handle_write(terminal_id, data)
@@ -71,14 +68,31 @@ impl DaemonManager {
             ClientMessage::OpenSession { session_id } => self.handle_open_session(session_id),
             ClientMessage::ChangeWindow { window_id } => self.handle_change_window(window_id),
             ClientMessage::KillWindow { window_id } => self.handle_kill_window(window_id),
+            ClientMessage::RenameWindow { window_id, name } => {
+                self.handle_rename_window(window_id, name)
+            }
         }
     }
+
+    fn handle_rename_window(&mut self, window_id: u64, name: String) -> ServerMessage {
+        self.window_manager.set_window_name(window_id, name);
+        ServerMessage::UpdatedSession {
+            session_info: self.get_session_info_by_id(self.user_manager.get_current_session_id()),
+        }
+    }
+
     fn handle_change_window(&mut self, window_id: u64) -> ServerMessage {
         self.user_manager.clear_all();
         let terminal_ids = self.window_manager.get_terminals_in_window(window_id);
         for terminal_id in terminal_ids {
             self.user_manager.add_terminal(terminal_id);
         }
+        Ok
+    }
+
+    fn handle_update_screen_size(&mut self, rows: u16, cols: u16) -> ServerMessage {
+        self.user_manager.update_dimensions(rows, cols);
+        self.terminal_manager.resize_all_terminals(rows, cols);
         Ok
     }
 
@@ -127,10 +141,11 @@ impl DaemonManager {
             }
         }
         if killed_session {
-            return ServerMessage::ListedSessions { sessions: self.get_all_session_info() }
+            return ServerMessage::ListedSessions {
+                sessions: self.get_all_session_info(),
+            };
         }
-        ServerMessage::
-        Ok
+        ServerMessage::Ok
     }
 
     fn handle_kill_window(&mut self, window_id: u64) -> ServerMessage {
@@ -151,9 +166,14 @@ impl DaemonManager {
             killed_session = true;
         }
         if killed_session {
-            return ServerMessage::ListedSessions { sessions: self.get_all_session_info() }
+            return ServerMessage::ListedSessions {
+                sessions: self.get_all_session_info(),
+            };
         }
-        ServerMessage::UpdatedSession { session_info: self.get_session_info_by_id(self.session_manager.get_session_id_from_window(window_id)) }
+        ServerMessage::UpdatedSession {
+            session_info: self
+                .get_session_info_by_id(self.session_manager.get_session_id_from_window(window_id)),
+        }
     }
 
     fn handle_create_window(&mut self, session_id: u64) -> ServerMessage {
@@ -167,7 +187,9 @@ impl DaemonManager {
             .add_window_to_session(session_id, window_id);
         self.user_manager.clear_all();
         self.user_manager.add_terminal(terminal_id);
-        ServerMessage::UpdatedSession { session_info: self.get_session_info_by_id(session_id) }
+        ServerMessage::UpdatedSession {
+            session_info: self.get_session_info_by_id(session_id),
+        }
     }
 
     fn handle_exit_session(&mut self) -> ServerMessage {
@@ -182,6 +204,7 @@ impl DaemonManager {
         // get terminals in first window
         // Add terminals to user setting
         // Update thread will send data based on user setting.
+        self.user_manager.set_current_session_id(session_id);
         let ids = self
             .session_manager
             .get_window_ids_by_session_id(session_id);
@@ -225,7 +248,7 @@ impl DaemonManager {
         let (rows, cols) = self.user_manager.get_dimensions();
         let terminal_id = self.terminal_manager.create_terminal(rows, cols);
         self.terminal_manager
-            .execute_command_on_terminal(terminal_id, format!("cd {working_dir}"));
+            .execute_command_on_terminal(terminal_id, format!("cd {working_dir} && clear"));
         if let Some(command) = command {
             self.terminal_manager
                 .execute_command_on_terminal(terminal_id, command);
@@ -237,8 +260,11 @@ impl DaemonManager {
             .session_manager
             .create_session(window_id, session_name.clone());
         self.user_manager.add_terminal(terminal_id);
+        self.user_manager.set_current_session_id(session_id);
 
-        ServerMessage::UpdatedSession { session_info: self.get_session_info_by_id(session_id) }
+        ServerMessage::UpdatedSession {
+            session_info: self.get_session_info_by_id(session_id),
+        }
     }
 
     fn get_all_session_info(&self) -> Vec<SessionInfo> {
@@ -262,15 +288,20 @@ impl DaemonManager {
             })
             .collect()
     }
-    fn get_session_info_by_id(&self, session_id: u64) -> SessionInfo{
+    fn get_session_info_by_id(&self, session_id: u64) -> SessionInfo {
         let session = self.session_manager.get_session_by_id(session_id);
         SessionInfo::new(
-            session_id, 
-            session.session_name.clone(), 
-            session.windows.iter().map(|window_id| {
-                self.window_manager.get_window_by_id(*window_id)
-                .get_window_info()
-            }).collect()
+            session_id,
+            session.session_name.clone(),
+            session
+                .windows
+                .iter()
+                .map(|window_id| {
+                    self.window_manager
+                        .get_window_by_id(*window_id)
+                        .get_window_info()
+                })
+                .collect(),
         )
     }
     fn handle_list_sessions(&self) -> ServerMessage {

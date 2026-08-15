@@ -16,6 +16,10 @@ impl TerminalWidget {
         }
     }
 
+    pub fn resize(&mut self, rows: u16, cols: u16) {
+        self.parser.screen_mut().set_size(rows, cols);
+    }
+
     pub fn update_screen(&mut self, state: &[u8]) {
         self.parser = Parser::new(
             self.parser.screen().size().0,
@@ -31,11 +35,7 @@ impl TerminalWidget {
     }
 }
 
-fn render_terminal(
-    screen: &vt100::Screen,
-    area: Rect,
-    buffer: &mut Buffer,
-) {
+fn render_terminal(screen: &vt100::Screen, area: Rect, buffer: &mut Buffer) {
     let (screen_rows, screen_cols) = screen.size();
 
     let rows = screen_rows.min(area.height);
@@ -47,9 +47,7 @@ fn render_terminal(
                 continue;
             };
 
-            let Some(tui_cell) =
-                buffer.cell_mut((area.x + col, area.y + row))
-            else {
+            let Some(tui_cell) = buffer.cell_mut((area.x + col, area.y + row)) else {
                 continue;
             };
 
@@ -59,11 +57,7 @@ fn render_terminal(
 
             let contents = vt_cell.contents();
 
-            tui_cell.set_symbol(if contents.is_empty() {
-                " "
-            } else {
-                contents
-            });
+            tui_cell.set_symbol(if contents.is_empty() { " " } else { contents });
 
             tui_cell.set_style(cell_style(vt_cell));
         }
@@ -78,9 +72,7 @@ fn render_terminal(
             let y = area.y + cursor_row;
 
             if let Some(cell) = buffer.cell_mut((x, y)) {
-                cell.set_style(
-                    cell.style().add_modifier(Modifier::REVERSED)
-                );
+                cell.set_style(cell.style().add_modifier(Modifier::REVERSED));
             }
         }
     }
@@ -119,12 +111,8 @@ fn vt_color_to_ratatui(color: VtColor) -> Color {
     match color {
         VtColor::Default => Color::Reset,
 
-        VtColor::Idx(index) => {
-            Color::Indexed(index)
-        }
+        VtColor::Idx(index) => Color::Indexed(index),
 
-        VtColor::Rgb(r, g, b) => {
-            Color::Rgb(r, g, b)
-        }
+        VtColor::Rgb(r, g, b) => Color::Rgb(r, g, b),
     }
 }
