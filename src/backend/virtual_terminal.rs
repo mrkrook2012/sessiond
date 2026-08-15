@@ -84,8 +84,8 @@ impl VirtualTerminal {
 
     pub fn recalculate_size(&mut self) {
         self.set_size(
-            self.global_rows / self.height_factor as u16,
-            self.global_cols / self.width_factor as u16,
+            self.global_rows * self.height_factor as u16,
+            self.global_cols * self.width_factor as u16,
         );
     }
 
@@ -99,7 +99,8 @@ impl VirtualTerminal {
     }
     pub fn set_ratio(&mut self, height_factor: f32, width_factor: f32) {
         self.height_factor = height_factor;
-        self.width_factor = width_factor
+        self.width_factor = width_factor;
+        self.recalculate_size();
     }
 
     fn set_size(&mut self, rows: u16, cols: u16) {

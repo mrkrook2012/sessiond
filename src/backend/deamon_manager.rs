@@ -1,3 +1,6 @@
+use tokio::io::split;
+
+use crate::backend::tree::SplitDirection;
 use crate::backend::{
     mini_user_manager::MiniUserManager, session_manager::SessionManager,
     terminal_manager::TerminalManager, window_manager::WindowManager,
@@ -54,11 +57,11 @@ impl DaemonManager {
             ClientMessage::ExitSession => self.handle_exit_session(),
             ClientMessage::KillSession { session_id } => self.handle_kill_session(session_id),
             ClientMessage::CreateTerminal {
-                start_terminal_id: _,
-                split_type: _,
-                working_dir: _,
-                command: _,
-            } => todo!(),
+                start_terminal_id,
+                split_type,
+                working_dir,
+                command,
+            } => self.handle_create_terminal(start_terminal_id, split_type, working_dir, command),
             ClientMessage::KillTerminal { terminal_id } => self.handle_kill_terminal(terminal_id),
             ClientMessage::WriteTerminal { terminal_id, data } => {
                 self.handle_write(terminal_id, data)
@@ -74,6 +77,84 @@ impl DaemonManager {
         }
     }
 
+    fn handle_create_terminal(
+        &mut self,
+        terminal_id: u64,
+        split_type: SplitDirection,
+        working_dir: String,
+        command: Option<String>,
+    ) -> ServerMessage {
+        let window_id = self.window_manager.get_window_id_from_terminal(terminal_id);
+        let session_id = self.session_manager.get_session_id_from_window(window_id);
+
+        // Create new terminal
+        // Add to user sub
+        // Update layout in window
+
+        let (rows, cols) = self.user_manager.get_dimensions();
+        let new_terminal_id = self.terminal_manager.create_terminal(rows, cols);
+        self.terminal_manager
+            .execute_command_on_terminal(new_terminal_id, format!("cd {working_dir} && clear"));
+
+        if let Some(command) = command {
+            self.terminal_manager
+                .execute_command_on_terminal(new_terminal_id, command);
+        }
+
+        let window = self.window_manager.get_window_by_id_mut(window_id);
+        let root = window.get_window_layout_ref_mut();
+        root.add_terminal(
+            &mut self.terminal_manager,
+            terminal_id,
+            new_terminal_id,
+            split_type,
+        );
+
+        ServerMessage::UpdatedSession {
+            session_info: self.get_session_info_by_id(session_id),
+        }
+    }
+
+    fn handle_kill_terminal(&mut self, terminal_id: u64) -> ServerMessage {
+        // Unsub from terminal
+        // Kill terminal
+        // Check window terminal count, if 1 kill window, else rm window from tree
+        // check window count in session, if zero kill session
+        let window_id = self.window_manager.get_window_id_from_terminal(terminal_id);
+        let session_id = self.session_manager.get_session_id_from_window(window_id);
+
+        self.user_manager.remove_terminal(terminal_id);
+        self.window_manager
+            .remove_terminal_from_window(window_id, terminal_id);
+        let terminals_left = self.window_manager.get_terminals_in_window(window_id);
+        if terminals_left.len() == 0 {
+            // kill window
+            self.window_manager.kill_window(window_id);
+            self.session_manager.remove_window_from_session(window_id);
+
+            // Check if there are windows left
+            if self
+                .session_manager
+                .get_all_windows_from_session(session_id)
+                .len()
+                == 0
+            {
+                // Session is dead, exit.
+                return ServerMessage::ListedSessions {
+                    sessions: self.get_all_session_info(),
+                };
+            }
+        } else {
+            // Just remove terminal from tree
+            let window = self.window_manager.get_window_by_id_mut(window_id);
+            let root = window.get_window_layout_ref_mut();
+            root.remove_terminal(&mut self.terminal_manager, terminal_id);
+        }
+
+        ServerMessage::UpdatedSession {
+            session_info: self.get_session_info_by_id(session_id),
+        }
+    }
     fn handle_rename_window(&mut self, window_id: u64, name: String) -> ServerMessage {
         self.window_manager.set_window_name(window_id, name);
         ServerMessage::UpdatedSession {
@@ -117,36 +198,36 @@ impl DaemonManager {
         ServerMessage::ListedSessions { sessions }
     }
 
-    fn handle_kill_terminal(&mut self, terminal_id: u64) -> ServerMessage {
-        // Kill the terminal,
-        // Kill any windows or even sessions if they're now empty
-        self.terminal_manager.kill_terminal(terminal_id);
-        self.user_manager.remove_terminal(terminal_id);
-        let window_id = self.window_manager.get_window_id_from_terminal(terminal_id);
-        self.window_manager
-            .remove_terminal_from_window(window_id, terminal_id);
-        let terminal_ids = self.window_manager.get_terminals_in_window(window_id);
-        let mut killed_session = false;
-        if terminal_ids.len() == 0 {
-            // Just removed the last terminal in the window, remove window from sess
-            let session_id = self.session_manager.get_session_id_from_window(window_id);
-            self.session_manager.remove_window_from_session(window_id);
-            let remaining_windows = self
-                .session_manager
-                .get_all_windows_from_session(session_id);
-            if remaining_windows.len() == 0 {
-                // This was last terminal in last window, kill the session
-                self.session_manager.kill_session(session_id);
-                killed_session = true;
-            }
-        }
-        if killed_session {
-            return ServerMessage::ListedSessions {
-                sessions: self.get_all_session_info(),
-            };
-        }
-        ServerMessage::Ok
-    }
+    // fn handle_kill_terminal(&mut self, terminal_id: u64) -> ServerMessage {
+    //     // Kill the terminal,
+    //     // Kill any windows or even sessions if they're now empty
+    //     self.terminal_manager.kill_terminal(terminal_id);
+    //     self.user_manager.remove_terminal(terminal_id);
+    //     let window_id = self.window_manager.get_window_id_from_terminal(terminal_id);
+    //     self.window_manager
+    //         .remove_terminal_from_window(window_id, terminal_id);
+    //     let terminal_ids = self.window_manager.get_terminals_in_window(window_id);
+    //     let mut killed_session = false;
+    //     if terminal_ids.len() == 0 {
+    //         // Just removed the last terminal in the window, remove window from sess
+    //         let session_id = self.session_manager.get_session_id_from_window(window_id);
+    //         self.session_manager.remove_window_from_session(window_id);
+    //         let remaining_windows = self
+    //             .session_manager
+    //             .get_all_windows_from_session(session_id);
+    //         if remaining_windows.len() == 0 {
+    //             // This was last terminal in last window, kill the session
+    //             self.session_manager.kill_session(session_id);
+    //             killed_session = true;
+    //         }
+    //     }
+    //     if killed_session {
+    //         return ServerMessage::ListedSessions {
+    //             sessions: self.get_all_session_info(),
+    //         };
+    //     }
+    //     ServerMessage::Ok
+    // }
 
     fn handle_kill_window(&mut self, window_id: u64) -> ServerMessage {
         let session_id = self.session_manager.get_session_id_from_window(window_id);

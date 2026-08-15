@@ -23,6 +23,10 @@ impl Window {
         self.root.clone()
     }
 
+    pub fn get_window_layout_ref_mut(&mut self) -> &mut Node {
+        &mut self.root
+    }
+
     pub fn get_window_info(&self) -> WindowInfo {
         WindowInfo::new(self.window_id, self.name.clone(), self.root.clone())
     }

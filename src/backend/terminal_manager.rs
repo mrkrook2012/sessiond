@@ -64,12 +64,12 @@ impl TerminalManager {
         self.last_id
     }
 
-    fn get_terminal_from_id(&self, terminal_id: u64) -> &VirtualTerminal {
+    pub fn get_terminal_from_id(&self, terminal_id: u64) -> &VirtualTerminal {
         self.terminals
             .get(&terminal_id)
             .expect("Terminal with id should exist")
     }
-    fn get_terminal_from_id_mut(&mut self, terminal_id: u64) -> &mut VirtualTerminal {
+    pub fn get_terminal_from_id_mut(&mut self, terminal_id: u64) -> &mut VirtualTerminal {
         self.terminals
             .get_mut(&terminal_id)
             .expect("Terminal with id should exist")
