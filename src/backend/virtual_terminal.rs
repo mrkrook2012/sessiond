@@ -84,8 +84,8 @@ impl VirtualTerminal {
 
     pub fn recalculate_size(&mut self) {
         self.set_size(
-            self.global_rows * self.height_factor as u16,
-            self.global_cols * self.width_factor as u16,
+            (self.global_rows as f32 * self.height_factor) as u16,
+            (self.global_cols as f32 * self.width_factor) as u16,
         );
     }
 

@@ -38,6 +38,10 @@ impl SessionManager {
         self.get_session_by_id(session_id).windows.clone()
     }
 
+    pub fn is_session_empty(&self, session_id: u64) -> bool {
+        self.get_all_windows_from_session(session_id).is_empty()
+    }
+
     pub fn does_session_exist(&self, session_id: u64) -> bool {
         self.sessions.contains_key(&session_id)
     }

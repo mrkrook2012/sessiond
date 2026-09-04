@@ -1,10 +1,5 @@
 use bincode_next::{Decode, Encode};
 
-use crate::backend::{
-    session_manager::Session,
-    tree::{Node, SplitDirection},
-};
-
 #[derive(Decode, Encode, Debug)]
 pub enum ClientMessage {
     Ping,
@@ -32,11 +27,6 @@ pub enum ClientMessage {
         window_id: u64,
     },
 
-    RenameWindow {
-        window_id: u64,
-        name: String,
-    },
-
     // Is the start command, will start a session with 1 terminal running shell
     CreateSession {
         working_dir: String,
@@ -53,13 +43,14 @@ pub enum ClientMessage {
     },
 
     // Reserved for manual terminal creation
+    // Should be unused, create new window is only way. 
     CreateTerminal {
         start_terminal_id: u64,
-        split_type: SplitDirection,
         working_dir: String,
         command: Option<String>,
     },
 
+    // Should not be used, kill the window instead. 
     KillTerminal {
         terminal_id: u64,
     },
@@ -83,26 +74,24 @@ pub enum ServerMessage {
     TerminalData { terminals: Vec<TerminalUpdate> },
 }
 
-#[derive(Decode, Encode, Debug)]
+#[derive(Decode, Encode, Debug, Clone)]
 pub struct SessionInfo {
     pub session_id: u64,
     pub session_name: String,
     pub windows_info: Vec<WindowInfo>,
 }
 
-#[derive(Decode, Encode, Debug)]
+#[derive(Decode, Encode, Debug, Clone)]
 pub struct WindowInfo {
     pub window_id: u64,
-    pub window_name: String,
-    pub layout: Node,
+    pub terminal_id: u64,
 }
 
 impl WindowInfo {
-    pub fn new(window_id: u64, window_name: String, layout: Node) -> Self {
+    pub fn new(window_id: u64, terminal_id: u64) -> Self {
         Self {
             window_id,
-            window_name,
-            layout,
+            terminal_id,
         }
     }
 }

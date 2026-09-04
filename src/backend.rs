@@ -3,7 +3,6 @@ pub mod deamon;
 pub mod deamon_manager;
 pub mod mini_user_manager;
 pub mod terminal_manager;
-pub mod tree;
 pub mod user_manager;
 pub mod window;
 pub mod window_manager;
