@@ -607,6 +607,51 @@ pub fn run_frontend() -> Result<()> {
                                     st.input_mode = InputMode::PrefixPending;
                                 }
 
+                                // Ctrl-c: interrupt (SIGINT via the
+                                // terminal driver), Ctrl-v: literal-next,
+                                // Ctrl-r: reverse history search. These
+                                // need to be forwarded as raw control
+                                // bytes rather than falling through to
+                                // the generic KeyCode::Char(c) handler
+                                // below, since that path doesn't know
+                                // about the Ctrl modifier.
+                                KeyCode::Char('c') if ctrl => {
+                                    if let Some(terminal_id) = st.current_terminal_id() {
+                                        drop(st);
+                                        sender
+                                            .send(&ClientMessage::WriteTerminal {
+                                                terminal_id,
+                                                data: vec![0x03],
+                                            })
+                                            .unwrap();
+                                        continue;
+                                    }
+                                }
+                                KeyCode::Char('v') if ctrl => {
+                                    if let Some(terminal_id) = st.current_terminal_id() {
+                                        drop(st);
+                                        sender
+                                            .send(&ClientMessage::WriteTerminal {
+                                                terminal_id,
+                                                data: vec![0x16],
+                                            })
+                                            .unwrap();
+                                        continue;
+                                    }
+                                }
+                                KeyCode::Char('r') if ctrl => {
+                                    if let Some(terminal_id) = st.current_terminal_id() {
+                                        drop(st);
+                                        sender
+                                            .send(&ClientMessage::WriteTerminal {
+                                                terminal_id,
+                                                data: vec![0x12],
+                                            })
+                                            .unwrap();
+                                        continue;
+                                    }
+                                }
+
                                 KeyCode::Enter => {
                                     if let Some(terminal_id) = st.current_terminal_id() {
                                         drop(st);
@@ -674,6 +719,38 @@ pub fn run_frontend() -> Result<()> {
                                             .send(&ClientMessage::WriteTerminal {
                                                 terminal_id,
                                                 data: b"\x1b[B".to_vec(),
+                                            })
+                                            .unwrap();
+                                        continue;
+                                    }
+                                }
+                                // Tab / Shift-Tab: needed for bash's
+                                // completion (single Tab, or cycling
+                                // through a completion menu with
+                                // Shift-Tab). Crossterm reports these as
+                                // their own KeyCodes rather than
+                                // Char('\t'), so they need explicit
+                                // handling or they'd otherwise be
+                                // silently dropped by the catch-all below.
+                                KeyCode::Tab => {
+                                    if let Some(terminal_id) = st.current_terminal_id() {
+                                        drop(st);
+                                        sender
+                                            .send(&ClientMessage::WriteTerminal {
+                                                terminal_id,
+                                                data: vec![0x09],
+                                            })
+                                            .unwrap();
+                                        continue;
+                                    }
+                                }
+                                KeyCode::BackTab => {
+                                    if let Some(terminal_id) = st.current_terminal_id() {
+                                        drop(st);
+                                        sender
+                                            .send(&ClientMessage::WriteTerminal {
+                                                terminal_id,
+                                                data: b"\x1b[Z".to_vec(),
                                             })
                                             .unwrap();
                                         continue;
