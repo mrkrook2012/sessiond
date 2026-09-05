@@ -8,8 +8,8 @@ pub struct MiniUserManager {
 impl MiniUserManager {
     pub fn new() -> Self {
         Self {
-            rows: 0,
-            cols: 0,
+            rows: 100,
+            cols: 100,
             current_session_id: 0,
             visible_terminals: Vec::new(),
         }

@@ -181,6 +181,7 @@ impl DaemonManager {
 
         for terminal_id in terminal_ids {
             self.terminal_manager.kill_terminal(terminal_id);
+            self.user_manager.remove_terminal(terminal_id);
         }
         self.session_manager.kill_session(session_id);
         let sessions = self.get_all_session_info();
@@ -308,7 +309,6 @@ impl DaemonManager {
         // Create terminal
         // Create window for terminal
         // Create Session with window
-        // Add terminal to user visible terminals
         let session_name = session_name.unwrap_or_else(|| "penar".to_string());
         let (rows, cols) = self.user_manager.get_dimensions();
         let terminal_id = self.terminal_manager.create_terminal(rows, cols);
@@ -321,14 +321,12 @@ impl DaemonManager {
         let window_id = self.window_manager.create_window(terminal_id);
 
         // TODO Fix clone
-        let session_id = self
+        let _session_id = self
             .session_manager
             .create_session(window_id, session_name.clone());
-        self.user_manager.add_terminal(terminal_id);
-        self.user_manager.set_current_session_id(session_id);
 
-        ServerMessage::UpdatedSession {
-            session_info: self.get_session_info_by_id(session_id),
+        ServerMessage::ListedSessions {
+            sessions: self.get_all_session_info(),
         }
     }
 
