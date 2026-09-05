@@ -2,8 +2,8 @@ use crate::backend::{
     mini_user_manager::MiniUserManager, session_manager::SessionManager,
     terminal_manager::TerminalManager, window_manager::WindowManager,
 };
-use crate::ipc::protocol::ServerMessage::Ok;
-use crate::ipc::protocol::*;
+use crate::ipc::protocol::{ClientMessage, ServerMessage, SessionInfo};
+use color_eyre::eyre::Result;
 
 pub struct DaemonManager {
     user_manager: MiniUserManager,
@@ -39,34 +39,36 @@ impl DaemonManager {
         }
     }
 
-    pub fn process_message(&mut self, client_message: ClientMessage) -> ServerMessage {
+    pub fn process_message(&mut self, client_message: ClientMessage) -> Result<ServerMessage> {
         match client_message {
-            ClientMessage::Ping => ServerMessage::Pong,
-            ClientMessage::Start { rows, cols } => self.handle_start(rows, cols),
+            ClientMessage::Ping => Ok(ServerMessage::Pong),
+            ClientMessage::Start { rows, cols } => Ok(self.handle_start(rows, cols)),
             ClientMessage::UpdateScreenSize { rows, cols } => {
-                self.handle_update_screen_size(rows, cols)
+                Ok(self.handle_update_screen_size(rows, cols))
             }
             ClientMessage::CreateSession {
                 working_dir,
                 command,
                 session_name,
-            } => self.handle_create_session(working_dir, command, session_name),
-            ClientMessage::ExitSession => self.handle_exit_session(),
-            ClientMessage::KillSession { session_id } => self.handle_kill_session(session_id),
+            } => Ok(self.handle_create_session(working_dir, command, session_name)),
+            ClientMessage::ExitSession => Ok(self.handle_exit_session()),
+            ClientMessage::KillSession { session_id } => Ok(self.handle_kill_session(session_id)),
             ClientMessage::CreateTerminal {
                 start_terminal_id,
                 working_dir,
                 command,
             } => todo!(),
-            ClientMessage::KillTerminal { terminal_id } => self.handle_kill_terminal(terminal_id),
-            ClientMessage::WriteTerminal { terminal_id, data } => {
-                self.handle_write(terminal_id, data)
+            ClientMessage::KillTerminal { terminal_id } => {
+                Ok(self.handle_kill_terminal(terminal_id))
             }
-            ClientMessage::ListSessions {} => self.handle_list_sessions(),
-            ClientMessage::CreateWindow { session_id } => self.handle_create_window(session_id),
+            ClientMessage::WriteTerminal { terminal_id, data } => {
+                Ok(self.handle_write(terminal_id, data))
+            }
+            ClientMessage::ListSessions {} => Ok(self.handle_list_sessions()),
+            ClientMessage::CreateWindow { session_id } => Ok(self.handle_create_window(session_id)),
             ClientMessage::OpenSession { session_id } => self.handle_open_session(session_id),
-            ClientMessage::ChangeWindow { window_id } => self.handle_change_window(window_id),
-            ClientMessage::KillWindow { window_id } => self.handle_kill_window(window_id),
+            ClientMessage::ChangeWindow { window_id } => Ok(self.handle_change_window(window_id)),
+            ClientMessage::KillWindow { window_id } => Ok(self.handle_kill_window(window_id)),
         }
     }
 
@@ -115,13 +117,13 @@ impl DaemonManager {
             .window_manager
             .get_terminal_id_from_window_id(window_id);
         self.user_manager.add_terminal(terminal_id);
-        Ok
+        ServerMessage::Ok
     }
 
     fn handle_update_screen_size(&mut self, rows: u16, cols: u16) -> ServerMessage {
         self.user_manager.update_dimensions(rows, cols);
         self.terminal_manager.resize_all_terminals(rows, cols);
-        Ok
+        ServerMessage::Ok
     }
 
     fn handle_kill_terminal(&mut self, terminal_id: u64) -> ServerMessage {
@@ -254,10 +256,10 @@ impl DaemonManager {
     fn handle_exit_session(&mut self) -> ServerMessage {
         // Exiting is just stopping sending.
         self.user_manager.clear_all();
-        Ok
+        ServerMessage::Ok
     }
 
-    fn handle_open_session(&mut self, session_id: u64) -> ServerMessage {
+    fn handle_open_session(&mut self, session_id: u64) -> Result<ServerMessage> {
         // Get sessions
         // Get first window in session
         // get terminals in first window
@@ -267,7 +269,9 @@ impl DaemonManager {
         let ids = self
             .session_manager
             .get_window_ids_by_session_id(session_id);
-        let window_id = ids.first().unwrap();
+        let window_id = ids
+            .first()
+            .ok_or_else(|| color_eyre::eyre::eyre!("No windows found for session"))?;
 
         self.user_manager.add_terminal(
             self.window_manager
@@ -278,8 +282,8 @@ impl DaemonManager {
             .get_all_session_info()
             .into_iter()
             .find(|info| info.session_id == session_id)
-            .unwrap();
-        ServerMessage::UpdatedSession { session_info }
+            .ok_or_else(|| color_eyre::eyre::eyre!("Session info not found"))?;
+        Ok(ServerMessage::UpdatedSession { session_info })
     }
 
     fn handle_start(&mut self, rows: u16, cols: u16) -> ServerMessage {
@@ -291,7 +295,7 @@ impl DaemonManager {
     fn handle_write(&mut self, terminal_id: u64, data: Vec<u8>) -> ServerMessage {
         self.terminal_manager
             .send_bytes_to_terminal(terminal_id, data.as_slice());
-        Ok
+        ServerMessage::Ok
     }
 
     fn handle_create_session(

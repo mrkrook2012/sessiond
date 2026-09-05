@@ -117,10 +117,17 @@ pub async fn run_daemon() -> Result<()> {
             };
             println!("Recieved Message: {:?}", client_message);
 
-            let response = daemon_manager
+            let response = match daemon_manager
                 .lock()
                 .unwrap()
-                .process_message(client_message);
+                .process_message(client_message)
+            {
+                Ok(res) => res,
+                Err(e) => {
+                    eprintln!("Error processing message: {}", e);
+                    continue;
+                }
+            };
             println!("Responded: {:?}", response);
             if safe_sender.lock().unwrap().send(&response).is_err() {
                 eprintln!("Failed to send response, client likely disconnected");
