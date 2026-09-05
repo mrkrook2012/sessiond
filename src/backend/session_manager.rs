@@ -1,7 +1,3 @@
-use crate::{
-    backend::window_manager::WindowManager,
-    ipc::protocol::{SessionInfo, WindowInfo},
-};
 use std::{collections::HashMap, vec};
 
 pub struct SessionManager {
@@ -31,7 +27,7 @@ impl SessionManager {
             .retain(|&id| id != window_id)
     }
 
-    pub fn get_session_name_by_id(&self, session_id: u64) -> String {
+    pub fn get_session_name_by_id(&self, _session_id: u64) -> String {
         "Penar".to_string()
     }
     pub fn get_all_windows_from_session(&self, session_id: u64) -> Vec<u64> {

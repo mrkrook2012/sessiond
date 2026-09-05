@@ -20,7 +20,6 @@
 //! pub struct WindowInfo { ... }
 //! ```
 
-use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::{Arc, Mutex};

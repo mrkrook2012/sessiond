@@ -53,11 +53,12 @@ impl DaemonManager {
             } => Ok(self.handle_create_session(working_dir, command, session_name)),
             ClientMessage::ExitSession => Ok(self.handle_exit_session()),
             ClientMessage::KillSession { session_id } => Ok(self.handle_kill_session(session_id)),
-            ClientMessage::CreateTerminal {
-                start_terminal_id,
-                working_dir,
-                command,
-            } => todo!(),
+             ClientMessage::CreateTerminal {
+                 start_terminal_id: _,
+                 working_dir: _,
+                 command: _,
+             } => todo!(),
+
             ClientMessage::KillTerminal { terminal_id } => {
                 Ok(self.handle_kill_terminal(terminal_id))
             }

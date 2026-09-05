@@ -36,7 +36,8 @@ impl TerminalManager {
     }
 
     pub fn resize_all_terminals(&mut self, rows: u16, cols: u16) {
-        for (terminal_id, terminal) in &mut self.terminals {
+        for (_terminal_id, terminal) in &mut self.terminals {
+
             terminal.set_global_size(rows, cols);
             terminal.recalculate_size();
         }

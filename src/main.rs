@@ -1,12 +1,7 @@
-use crate::ipc::consts::socket_name;
 use crate::backend::deamon::run_daemon;
 use crate::frontend::frontend::run_frontend;
 use color_eyre::Result;
-use ratatui::crossterm::execute;
-use ratatui::crossterm::terminal::{EnterAlternateScreen, enable_raw_mode};
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
-use std::path::Path;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;

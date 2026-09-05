@@ -1,10 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    backend::{
-        window::{self, Window},
-        window_manager,
-    },
+    backend::window::Window,
     ipc::protocol::WindowInfo,
 };
 
