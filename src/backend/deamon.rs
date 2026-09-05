@@ -59,7 +59,7 @@ pub async fn run_daemon() -> Result<()> {
         window_manager,
         session_manager,
     )));
-
+    println!("Daemon noises");
     let listener = ListenerOptions::new()
         .name(socket_name())
         .create_sync()

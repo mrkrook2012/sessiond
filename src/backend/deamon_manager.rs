@@ -2,7 +2,7 @@ use crate::backend::{
     mini_user_manager::MiniUserManager, session_manager::SessionManager,
     terminal_manager::TerminalManager, window_manager::WindowManager,
 };
-use crate::ipc::protocol::{ClientMessage, ServerMessage, SessionInfo};
+use crate::ipc::protocol::{ClientMessage, ExportSessionInfo, ServerMessage, SessionInfo};
 use color_eyre::eyre::Result;
 
 pub struct DaemonManager {
@@ -53,11 +53,11 @@ impl DaemonManager {
             } => Ok(self.handle_create_session(working_dir, command, session_name)),
             ClientMessage::ExitSession => Ok(self.handle_exit_session()),
             ClientMessage::KillSession { session_id } => Ok(self.handle_kill_session(session_id)),
-             ClientMessage::CreateTerminal {
-                 start_terminal_id: _,
-                 working_dir: _,
-                 command: _,
-             } => todo!(),
+            ClientMessage::CreateTerminal {
+                start_terminal_id: _,
+                working_dir: _,
+                command: _,
+            } => todo!(),
 
             ClientMessage::KillTerminal { terminal_id } => {
                 Ok(self.handle_kill_terminal(terminal_id))
@@ -70,48 +70,17 @@ impl DaemonManager {
             ClientMessage::OpenSession { session_id } => self.handle_open_session(session_id),
             ClientMessage::ChangeWindow { window_id } => Ok(self.handle_change_window(window_id)),
             ClientMessage::KillWindow { window_id } => Ok(self.handle_kill_window(window_id)),
+            ClientMessage::ExportSession { session_info } => {
+                Ok(self.handle_export_session(session_info))
+            }
         }
     }
 
-    // fn handle_create_terminal(
-    //     &mut self,
-    //     terminal_id: u64,
-    //     split_type: SplitDirection,
-    //     working_dir: String,
-    //     command: Option<String>,
-    // ) -> ServerMessage {
-    //     let window_id = self.window_manager.get_window_id_from_terminal(terminal_id);
-    //     let session_id = self.session_manager.get_session_id_from_window(window_id);
-
-    //     // Create new terminal
-    //     // Add to user sub
-    //     // Update layout in window
-
-    //     let (rows, cols) = self.user_manager.get_dimensions();
-    //     println!("Creating terminal with size: {rows}, {cols}");
-    //     let new_terminal_id = self.terminal_manager.create_terminal(rows, cols);
-    //     self.terminal_manager
-    //         .execute_command_on_terminal(new_terminal_id, format!("cd {working_dir} && clear"));
-
-    //     if let Some(command) = command {
-    //         self.terminal_manager
-    //             .execute_command_on_terminal(new_terminal_id, command);
-    //     }
-
-    //     let window = self.window_manager.get_window_by_id_mut(window_id);
-    //     let root = window.get_window_layout_ref_mut();
-    //     root.add_terminal(
-    //         &mut self.terminal_manager,
-    //         terminal_id,
-    //         new_terminal_id,
-    //         split_type,
-    //     );
-
-    //     ServerMessage::UpdatedSession {
-    //         session_info: self.get_session_info_by_id(session_id),
-    //     }
-    // }
-
+    fn handle_export_session(&mut self, session_info: ExportSessionInfo) -> ServerMessage {
+        // Just testing
+        println!("Recieved Session {:?}", session_info);
+        ServerMessage::Ok
+    }
     fn handle_change_window(&mut self, window_id: u64) -> ServerMessage {
         self.user_manager.clear_all();
         let terminal_id = self

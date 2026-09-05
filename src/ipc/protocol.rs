@@ -42,6 +42,10 @@ pub enum ClientMessage {
         session_id: u64,
     },
 
+    ExportSession {
+        session_info: ExportSessionInfo
+    },
+
     // Reserved for manual terminal creation
     // Should be unused, create new window is only way. 
     CreateTerminal {
@@ -72,6 +76,18 @@ pub enum ServerMessage {
     // but also if you kill the last terminal, window or just kill a session
     ListedSessions { sessions: Vec<SessionInfo> },
     TerminalData { terminals: Vec<TerminalUpdate> },
+}
+
+#[derive(Decode, Encode, Debug, Clone)]
+pub struct ExportSessionInfo {
+    pub session_name: String,
+    pub windows_info: Vec<WindowInfo>,
+}
+
+#[derive(Decode, Encode, Debug, Clone)]
+pub struct ExportWindowInfo {
+    pub working_dir: String,
+    pub command: String,
 }
 
 #[derive(Decode, Encode, Debug, Clone)]

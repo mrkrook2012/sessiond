@@ -1,11 +1,45 @@
 use portable_pty::{CommandBuilder, PtyPair, PtySize, native_pty_system};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::thread::sleep;
+use std::time::Duration;
+use vt100::Callbacks;
 use vt100::Parser;
 
+pub struct Caller {}
+
+impl Callbacks for Caller {
+    fn unhandled_osc(&mut self, _screen: &mut vt100::Screen, params: &[&[u8]]) {
+        if params.first() != Some(&b"133".as_slice()) {
+            return;
+        }
+
+        match params.get(1).copied() {
+            Some(b"A") => {
+                println!("prompt started");
+            }
+
+            Some(b"B") => {
+                println!("command input started");
+            }
+
+            Some(b"C") => {
+                let command = params.get(2).map(|v| String::from_utf8_lossy(v));
+
+                println!("command execution started: {:?}", command);
+            }
+
+            Some(b"D") => {
+                println!("command finished");
+            }
+
+            _ => {}
+        }
+    }
+}
 pub struct VirtualTerminal {
     id: u64,
-    parser: Arc<Mutex<Parser>>,
+    parser: Arc<Mutex<Parser<Caller>>>,
     pair: PtyPair, // master and slave of Pty
     writer: Box<dyn std::io::Write + Send>,
     width_factor: f32,
@@ -28,8 +62,13 @@ impl VirtualTerminal {
         pair.slave
             .spawn_command(CommandBuilder::new("/bin/bash"))
             .unwrap();
-        let writer = pair.master.take_writer().unwrap();
-        let parser = Arc::new(Mutex::new(Parser::new(global_rows, global_cols, 0)));
+        let mut writer = pair.master.take_writer().unwrap();
+        let parser = Arc::new(Mutex::new(Parser::new_with_callbacks(
+            global_rows,
+            global_cols,
+            0,
+            Caller {},
+        )));
 
         // TODO
         // Temporary workaround, this should be owned seperately
@@ -53,6 +92,26 @@ impl VirtualTerminal {
             }
         });
 
+        while parser.lock().unwrap().screen().contents() == "" {
+            sleep(Duration::from_millis(20));
+        }
+
+        println!("Injecting bash hooks");
+        let setup = r#"__osc133_command_start() {
+    case "$BASH_COMMAND" in
+        __osc133_*|printf*|local*|trap*|PROMPT_COMMAND*)
+            return
+            ;;
+    esac
+
+    printf '\033]133;C;%s\007' "$BASH_COMMAND"
+}
+
+trap '__osc133_command_start' DEBUG"#;
+
+        writer.write_all(setup.as_bytes()).unwrap();
+        writer.write_all(b"\n").unwrap();
+        writer.flush().unwrap();
         Self {
             id: id,
             parser: parser,
