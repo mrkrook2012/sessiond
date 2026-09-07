@@ -43,18 +43,18 @@ pub enum ClientMessage {
     },
 
     ExportSession {
-        session_info: ExportSessionInfo
+        session_id: u64,
     },
 
     // Reserved for manual terminal creation
-    // Should be unused, create new window is only way. 
+    // Should be unused, create new window is only way.
     CreateTerminal {
         start_terminal_id: u64,
         working_dir: String,
         command: Option<String>,
     },
 
-    // Should not be used, kill the window instead. 
+    // Should not be used, kill the window instead.
     KillTerminal {
         terminal_id: u64,
     },

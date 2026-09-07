@@ -1,12 +1,15 @@
 use portable_pty::{CommandBuilder, PtyPair, PtySize, native_pty_system};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::RwLock;
 use std::thread::sleep;
 use std::time::Duration;
 use vt100::Callbacks;
 use vt100::Parser;
 
-pub struct Caller {}
+pub struct Caller {
+    current_command: Arc<RwLock<String>>,
+}
 
 impl Callbacks for Caller {
     fn unhandled_osc(&mut self, _screen: &mut vt100::Screen, params: &[&[u8]]) {
@@ -24,9 +27,10 @@ impl Callbacks for Caller {
             }
 
             Some(b"C") => {
-                let command = params.get(2).map(|v| String::from_utf8_lossy(v));
-
-                println!("command execution started: {:?}", command);
+                if let Some(cmd) = params.get(2).map(|v| String::from_utf8_lossy(v)) {
+                    *self.current_command.write().unwrap() = cmd.clone().into_owned();
+                    println!("command execution started: {:?}", cmd);
+                }
             }
 
             Some(b"D") => {
@@ -46,6 +50,7 @@ pub struct VirtualTerminal {
     height_factor: f32,
     global_rows: u16,
     global_cols: u16,
+    current_command: Arc<RwLock<String>>,
 }
 
 impl VirtualTerminal {
@@ -63,11 +68,16 @@ impl VirtualTerminal {
             .spawn_command(CommandBuilder::new("/bin/bash"))
             .unwrap();
         let mut writer = pair.master.take_writer().unwrap();
+        let current_command = Arc::new(RwLock::new(String::new()));
+
+        let caller = Caller {
+            current_command: Arc::clone(&current_command),
+        };
         let parser = Arc::new(Mutex::new(Parser::new_with_callbacks(
             global_rows,
             global_cols,
             0,
-            Caller {},
+            caller,
         )));
 
         // TODO
@@ -121,6 +131,7 @@ trap '__osc133_command_start' DEBUG"#;
             height_factor: 1.0,
             global_rows,
             global_cols,
+            current_command,
         }
     }
 
@@ -151,6 +162,10 @@ trap '__osc133_command_start' DEBUG"#;
     pub fn set_global_size(&mut self, rows: u16, cols: u16) {
         self.global_rows = rows;
         self.global_cols = cols;
+    }
+
+    pub fn get_current_command(&self) -> String {
+        self.current_command.read().unwrap().to_string()
     }
 
     pub fn get_ratio(&self) -> (f32, f32) {

@@ -70,15 +70,27 @@ impl DaemonManager {
             ClientMessage::OpenSession { session_id } => self.handle_open_session(session_id),
             ClientMessage::ChangeWindow { window_id } => Ok(self.handle_change_window(window_id)),
             ClientMessage::KillWindow { window_id } => Ok(self.handle_kill_window(window_id)),
-            ClientMessage::ExportSession { session_info } => {
-                Ok(self.handle_export_session(session_info))
+            ClientMessage::ExportSession { session_id } => {
+                Ok(self.handle_export_session(session_id))
             }
         }
     }
 
-    fn handle_export_session(&mut self, session_info: ExportSessionInfo) -> ServerMessage {
+    fn handle_export_session(&mut self, session_id: u64) -> ServerMessage {
         // Just testing
-        println!("Recieved Session {:?}", session_info);
+        let session = self.session_manager.get_session_by_id(session_id);
+        println!("Session name: {}", session.session_name);
+        let windows = self
+            .session_manager
+            .get_all_windows_from_session(session_id);
+        
+        for window_id in windows {
+            let terminal_id = self
+                .window_manager
+                .get_terminal_id_from_window_id(window_id);
+            let command = self.terminal_manager.get_command_from_terminal(terminal_id);
+            println!("Command: {}", command);
+        }
         ServerMessage::Ok
     }
     fn handle_change_window(&mut self, window_id: u64) -> ServerMessage {

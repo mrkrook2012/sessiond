@@ -245,7 +245,9 @@ pub fn run_frontend() -> Result<()> {
             };
             let mut st = state.lock().unwrap();
             match message {
-                ServerMessage::Ok => {}
+                ServerMessage::Ok => {
+                    st.status = "Done".to_owned();
+                }
                 ServerMessage::Pong => {}
                 ServerMessage::Started => {}
 
@@ -588,6 +590,21 @@ pub fn run_frontend() -> Result<()> {
                                     continue;
                                 }
                             }
+                            // e: export the selected session. The server
+                            // is expected to reply with a plain Ok once
+                            // the export is written; see the ServerMessage::Ok
+                            // arm above for the status update.
+                            KeyCode::Char('e') => {
+                                if let Some(session) = st.selected_session() {
+                                    let session_id = session.session_id;
+                                    st.status = "Exporting session...".to_owned();
+                                    drop(st);
+                                    sender
+                                        .send(&ClientMessage::ExportSession { session_id })
+                                        .unwrap();
+                                    continue;
+                                }
+                            }
                             KeyCode::Char('r') => {
                                 drop(st);
                                 sender.send(&ClientMessage::ListSessions).unwrap();
@@ -833,6 +850,8 @@ fn draw_session_list(frame: &mut ratatui::Frame, area: Rect, st: &AppState) {
         Span::raw("open  "),
         Span::styled(" x/d ", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw("kill  "),
+        Span::styled(" e ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw("export  "),
         Span::styled(" r ", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw("refresh  "),
         Span::styled(" q ", Style::default().add_modifier(Modifier::BOLD)),
