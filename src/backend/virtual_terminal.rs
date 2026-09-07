@@ -122,6 +122,7 @@ trap '__osc133_command_start' DEBUG"#;
         writer.write_all(setup.as_bytes()).unwrap();
         writer.write_all(b"\n").unwrap();
         writer.flush().unwrap();
+
         Self {
             id: id,
             parser: parser,

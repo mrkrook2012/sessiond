@@ -1,8 +1,9 @@
+use crate::backend::yaml::models::{YamlSession, YamlWindow};
 use crate::backend::{
     mini_user_manager::MiniUserManager, session_manager::SessionManager,
     terminal_manager::TerminalManager, window_manager::WindowManager,
 };
-use crate::ipc::protocol::{ClientMessage, ExportSessionInfo, ServerMessage, SessionInfo};
+use crate::ipc::protocol::{ClientMessage, ServerMessage, SessionInfo};
 use color_eyre::eyre::Result;
 
 pub struct DaemonManager {
@@ -73,24 +74,59 @@ impl DaemonManager {
             ClientMessage::ExportSession { session_id } => {
                 Ok(self.handle_export_session(session_id))
             }
+            ClientMessage::StartSessionFromFile { file_path } => {
+                self.handle_start_session_from_file(file_path)
+            }
         }
+    }
+
+    // TODO think about working directories and storing files
+    fn handle_start_session_from_file(&mut self, file_path: String) -> Result<ServerMessage> {
+        let input = std::fs::read_to_string(file_path)?;
+        let session_yaml: YamlSession = serde_yaml::from_str(&input)?;
+
+        let session_id = self
+            .session_manager
+            .create_empty_session(session_yaml.session_name);
+        for window in session_yaml.windows {
+            let terminal_id = self.terminal_manager.create_terminal(100, 100); // Should be usermanager ones
+            self.terminal_manager
+                .execute_command_on_terminal(terminal_id, window.command);
+            let window_id = self.window_manager.create_window(terminal_id);
+            self.session_manager
+                .add_window_to_session(session_id, window_id);
+        }
+        Ok(ServerMessage::Ok)
     }
 
     fn handle_export_session(&mut self, session_id: u64) -> ServerMessage {
         // Just testing
         let session = self.session_manager.get_session_by_id(session_id);
-        println!("Session name: {}", session.session_name);
         let windows = self
             .session_manager
             .get_all_windows_from_session(session_id);
-        
+
+        let mut commands: Vec<String> = vec![];
         for window_id in windows {
             let terminal_id = self
                 .window_manager
                 .get_terminal_id_from_window_id(window_id);
             let command = self.terminal_manager.get_command_from_terminal(terminal_id);
-            println!("Command: {}", command);
+            commands.push(command);
         }
+
+        let mut windows: Vec<YamlWindow> = vec![];
+        for command in commands {
+            let window = YamlWindow { command: command };
+            windows.push(window);
+        }
+        let yaml_session = YamlSession {
+            session_name: session.session_name.clone(),
+            windows: windows,
+        };
+
+        let yaml: String = serde_yaml::to_string(&yaml_session).unwrap();
+        std::fs::write("./template.yaml", yaml).unwrap();
         ServerMessage::Ok
     }
     fn handle_change_window(&mut self, window_id: u64) -> ServerMessage {

@@ -46,6 +46,10 @@ pub enum ClientMessage {
         session_id: u64,
     },
 
+    StartSessionFromFile{
+        file_path: String, // This should probably be an actual path later.
+    },
+
     // Reserved for manual terminal creation
     // Should be unused, create new window is only way.
     CreateTerminal {
@@ -78,17 +82,17 @@ pub enum ServerMessage {
     TerminalData { terminals: Vec<TerminalUpdate> },
 }
 
-#[derive(Decode, Encode, Debug, Clone)]
-pub struct ExportSessionInfo {
-    pub session_name: String,
-    pub windows_info: Vec<WindowInfo>,
-}
+// #[derive(Decode, Encode, Debug, Clone)]
+// pub struct ExportSessionInfo {
+//     pub session_name: String,
+//     pub windows_info: Vec<WindowInfo>,
+// }
 
-#[derive(Decode, Encode, Debug, Clone)]
-pub struct ExportWindowInfo {
-    pub working_dir: String,
-    pub command: String,
-}
+// #[derive(Decode, Encode, Debug, Clone)]
+// pub struct ExportWindowInfo {
+//     pub working_dir: String,
+//     pub command: String,
+// }
 
 #[derive(Decode, Encode, Debug, Clone)]
 pub struct SessionInfo {

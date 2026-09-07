@@ -55,6 +55,20 @@ impl SessionManager {
         );
         self.last_id
     }
+
+    pub fn create_empty_session(&mut self, session_name: String) -> u64 {
+        self.last_id += 1;
+
+        self.sessions.insert(
+            self.last_id.clone(),
+            Session {
+                session_id: self.last_id,
+                session_name,
+                windows: vec![],
+            },
+        );
+        self.last_id
+    }
     pub fn get_session_id_from_window(&self, window_id: u64) -> u64 {
         for (id, session) in &self.sessions {
             if session.windows.contains(&window_id) {

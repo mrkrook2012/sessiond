@@ -7,3 +7,4 @@ pub mod user_manager;
 pub mod window;
 pub mod window_manager;
 pub mod session_manager;
+pub mod yaml;

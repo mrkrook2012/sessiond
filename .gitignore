@@ -4,3 +4,4 @@ daemon.out
 frontend.log
 daemon.err
 frontend_recv_thread.out
+template.yaml
