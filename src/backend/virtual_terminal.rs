@@ -107,11 +107,20 @@ impl VirtualTerminal {
         }
 
         println!("Injecting bash hooks");
-        let setup = r#"__osc133_command_start() { case "$BASH_COMMAND" in __osc133_*|printf*|local*|trap*|PROMPT_COMMAND*) return;; esac; printf '\033]133;C;%s\007' "$BASH_COMMAND"; }; trap '__osc133_command_start' DEBUG > /dev/null 2>&1"#;
-        writer.write_all(b"stty -echo\n").unwrap();
+        let setup = r#"(trap '__osc133_command_start' DEBUG > /dev/null 2>&1
+__osc133_command_start() {
+    case "$BASH_COMMAND" in
+        __osc133_*|printf*|local*|trap*|PROMPT_COMMAND*)
+            return
+            ;;
+    esac
+
+    printf '\033]133;C;%s\007' "$BASH_COMMAND"
+}
+)"#;
+
         writer.write_all(setup.as_bytes()).unwrap();
         writer.write_all(b"\n").unwrap();
-        writer.write_all(b"stty echo\n").unwrap();
         writer.write_all(b"clear\n").unwrap();
 
         writer.flush().unwrap();
