@@ -50,6 +50,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     if cli.daemon {
+        // Clean up any stale socket file
         let _ = fs::remove_file("/tmp/penar.sock");
         let result = crate::backend::deamon::run_daemon().await;
         match result {
@@ -182,41 +183,35 @@ async fn handle_run_command(command: String) -> Result<()> {
         session_name: Some(session_name.clone()),
     })?;
 
-    match receiver.recv::<crate::ipc::protocol::ServerMessage>()? {
-        crate::ipc::protocol::ServerMessage::ListedSessions { sessions } => {
-            let session_info = sessions
-                .into_iter()
-                .find(|s| s.session_name == session_name)
-                .ok_or_else(|| {
-                    color_eyre::eyre::eyre!("Failed to find newly created session in list")
-                })?;
-            println!(
-                "Session created successfully: {}",
-                session_info.session_name
-            );
+    // Wait for ListedSessions message, discarding any other messages that might arrive first
+    let timeout = std::time::Duration::from_secs(5);
+    let start = std::time::Instant::now();
 
-            sender.send(&crate::ipc::protocol::ClientMessage::OpenSession {
-                session_id: session_info.session_id,
-            })?;
+    let sessions = loop {
+        if start.elapsed() > timeout {
+            return Err(color_eyre::eyre::eyre!("Timeout waiting for session list"));
+        }
 
-            match receiver.recv::<crate::ipc::protocol::ServerMessage>()? {
-                crate::ipc::protocol::ServerMessage::UpdatedSession { session_info: info } => {
-                    println!("Session opened successfully: {}", info.session_name);
-                }
-                _ => {
-                    return Err(color_eyre::eyre::eyre!(
-                        "Failed to open newly created session"
-                    ));
-                }
+        match receiver.recv::<crate::ipc::protocol::ServerMessage>()? {
+            crate::ipc::protocol::ServerMessage::ListedSessions { sessions } => {
+                break sessions;
+            }
+            // Discard other messages (like ping/pong, terminal data, etc.)
+            _ => {
+                // Continue waiting for ListedSessions
+                continue;
             }
         }
-        _ => {
-            return Err(color_eyre::eyre::eyre!(
-                "Expected list of sessions after creation"
-            ));
-        }
-    }
+    };
 
+    let session_info = sessions
+        .into_iter()
+        .find(|s| s.session_name == session_name)
+        .ok_or_else(|| color_eyre::eyre::eyre!("Failed to find newly created session in list"))?;
+    println!(
+        "Session created successfully: {}",
+        session_info.session_name
+    );
     Ok(())
 }
 async fn handle_list_sessions() -> Result<()> {

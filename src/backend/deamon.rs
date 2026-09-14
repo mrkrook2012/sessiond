@@ -34,7 +34,7 @@ pub async fn run_daemon() -> Result<()> {
                 println!("Daemon not yet running, starting daemon");
             }
             Err(e) => {
-                eprintln!("Deamon already running {}", e);
+                eprintln!("Daemon already running {}", e);
                 return Ok(());
             }
         }
@@ -45,7 +45,7 @@ pub async fn run_daemon() -> Result<()> {
     let daemonize = Daemonize::new().stdout(stdout).stderr(stderr);
     println!("Trying to daemonize");
     match daemonize.start() {
-        Ok(_) => println!("Succes, daemonized"),
+        Ok(_) => println!("Success, daemonized"),
         Err(e) => eprintln!("Error, {}", e),
     }
     let user_manager = MiniUserManager::new();
