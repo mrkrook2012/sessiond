@@ -1,25 +1,3 @@
-//! Frontend prototype: a session-list screen and a terminal screen.
-//!
-//! Simplified for the new protocol: every window has exactly one
-//! terminal (no splits, no per-pane layout, no window renaming - windows
-//! only have a `window_id` and a `terminal_id`). Creating/killing a
-//! terminal directly is reserved for internal use only; the frontend
-//! only ever creates/kills whole windows.
-//!
-//! REQUIRED CHANGE to protocol.rs before this compiles: the
-//! `ListedSessions` handler below needs to pull a copy of the
-//! currently-viewed session out of the freshly-received list (see the
-//! comment at that match arm for why), so `SessionInfo` and `WindowInfo`
-//! both need `Clone` added to their derive lists:
-//!
-//! ```ignore
-//! #[derive(Decode, Encode, Debug, Clone)]
-//! pub struct SessionInfo { ... }
-//!
-//! #[derive(Decode, Encode, Debug, Clone)]
-//! pub struct WindowInfo { ... }
-//! ```
-
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -667,7 +645,31 @@ pub fn run_frontend() -> Result<()> {
                                         continue;
                                     }
                                 }
-
+                                // 1-9: jump directly to the window at that
+                                // position (frontend-only window_nr - just
+                                // the 1-based index into windows_info, not
+                                // known to the server).
+                                KeyCode::Char(c) if c.is_ascii_digit() && !ctrl => {
+                                    if let Some(digit) = c.to_digit(10) {
+                                        if digit > 0 {
+                                            let idx = digit as usize - 1;
+                                            if let Some(session) = st.current_session.as_ref() {
+                                                if let Some(window) = session.windows_info.get(idx)
+                                                {
+                                                    let window_id = window.window_id;
+                                                    st.current_window_index = idx;
+                                                    st.sync_terminal();
+                                                    drop(st);
+                                                    sender
+                                                        .send(&ClientMessage::ChangeWindow {
+                                                            window_id,
+                                                        })
+                                                        .unwrap();
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                                 KeyCode::Enter => {
                                     if let Some(terminal_id) = st.current_terminal_id() {
                                         drop(st);
@@ -872,7 +874,8 @@ fn draw_terminal_screen(frame: &mut ratatui::Frame, area: Rect, st: &AppState) {
         .map(|s| {
             s.windows_info
                 .iter()
-                .map(|w| Line::from(format!("Window {}", w.window_id)))
+                .enumerate()
+                .map(|(i, _w)| Line::from(format!("{}", i + 1)))
                 .collect()
         })
         .unwrap_or_default();
@@ -932,11 +935,14 @@ fn draw_terminal_screen(frame: &mut ratatui::Frame, area: Rect, st: &AppState) {
         Span::raw("new window  "),
         Span::styled(" n/p ", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw("next/prev window  "),
+        Span::styled(" 1-9 ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw("jump to window  "),
         Span::styled(" x ", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw("kill window  "),
         Span::styled(" d ", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw("detach"),
     ]);
+
     let bar = Paragraph::new(keybinds).block(Block::default().borders(Borders::ALL));
     frame.render_widget(bar, bottom_chunks[1]);
 }
