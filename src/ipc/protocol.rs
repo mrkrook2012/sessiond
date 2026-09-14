@@ -67,6 +67,9 @@ pub enum ClientMessage {
         terminal_id: u64,
         data: Vec<u8>,
     },
+    
+    /// Kill the daemon process
+    KillDaemon,
 }
 
 #[derive(Decode, Encode, Debug)]

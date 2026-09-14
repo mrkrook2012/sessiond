@@ -14,22 +14,21 @@ pub mod cli;
 async fn main() -> Result<()> {
     let cli = cli::Cli::parse();
 
-    if cli.daemon {
-        // Clean up any stale socket file
-        let _ = fs::remove_file("/tmp/penar.sock");
-        let result = crate::backend::deamon::run_daemon().await;
-        match result {
-            Ok(()) => {
-                println!("Stopping daemon");
-            }
-            Err(e) => {
-                eprintln!("Got an error while running the daemon, {}", e);
-            }
-        }
-        return Ok(());
-    }
-
     match cli.command {
+        Some(cli::Commands::StartDaemon) => {
+            // Clean up any stale socket file
+            let _ = fs::remove_file("/tmp/penar.sock");
+            let result = crate::backend::deamon::run_daemon().await;
+            match result {
+                Ok(()) => {
+                    println!("Stopping daemon");
+                }
+                Err(e) => {
+                    eprintln!("Got an error while running the daemon, {}", e);
+                }
+            }
+            return Ok(());
+        }
         Some(cli::Commands::Run { command }) => {
             cli::handle_run_command(command).await?;
         }
@@ -42,6 +41,12 @@ async fn main() -> Result<()> {
         Some(cli::Commands::Kill { name }) => {
             cli::handle_kill_session(name).await?;
         }
+        Some(cli::Commands::KillAll) => {
+            cli::handle_kill_all_sessions().await?;
+        }
+        Some(cli::Commands::KillDaemon) => {
+            cli::handle_kill_daemon().await?;
+        }
         None => {
             // Original behavior: start daemon if not running, then run frontend
             while fs::metadata("/tmp/penar.sock").is_err() {
@@ -49,7 +54,7 @@ async fn main() -> Result<()> {
                 let stdout = File::create("./daemon.out").unwrap();
                 let stderr = File::create("./daemon.err").unwrap();
                 let result = Command::new(std::env::current_exe().unwrap())
-                    .arg("--daemon")
+                    .arg("start-daemon")
                     .stdout(stdout)
                     .stderr(stderr)
                     .spawn();

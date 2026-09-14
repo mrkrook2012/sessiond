@@ -17,10 +17,6 @@ use crate::ipc::protocol::ServerMessage;
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
-
-    /// Run as a daemon
-    #[arg(long)]
-    pub daemon: bool,
 }
 
 #[derive(Subcommand)]
@@ -42,6 +38,12 @@ pub enum Commands {
         /// The name of the session to kill
         name: String,
     },
+    /// Kills all active sessions
+    KillAll,
+    /// Kills the daemon process
+    KillDaemon,
+    /// Starts the daemon
+    StartDaemon,
 }
 
 pub fn is_yaml_config_file(arg: &str) -> bool {
@@ -74,7 +76,7 @@ pub async fn handle_run_command(command: String) -> Result<()> {
         let stdout = File::create("./daemon.out").unwrap();
         let stderr = File::create("./daemon.err").unwrap();
         let result = Command::new(std::env::current_exe().unwrap())
-            .arg("--daemon")
+            .arg("start-daemon")
             .stdout(stdout)
             .stderr(stderr)
             .spawn();
@@ -104,7 +106,7 @@ pub async fn handle_run_command(command: String) -> Result<()> {
         .split()
         .unwrap();
 
-    // NEW: if the argument points to an existing .yaml/.yml file, run it as a config
+    // if the argument points to an existing .yaml/.yml file, run it as a config
     if is_yaml_config_file(&command) {
         println!("Starting session from config file: {}", command);
 
@@ -117,6 +119,7 @@ pub async fn handle_run_command(command: String) -> Result<()> {
                 println!("Session started successfully from {}", command);
                 Ok(())
             }
+
             _ => Err(color_eyre::eyre::eyre!(
                 "Failed to start session from config file"
             )),
@@ -273,6 +276,57 @@ pub async fn handle_kill_session(name: String) -> Result<()> {
             ));
         }
     }
+
+    Ok(())
+}
+
+pub async fn handle_kill_all_sessions() -> Result<()> {
+    if fs::metadata("/tmp/penar.sock").is_err() {
+        return Err(color_eyre::eyre::eyre!("Daemon not running."));
+    }
+
+    let stream = interprocess::local_socket::Stream::connect(ipc::consts::socket_name())?;
+    let (mut sender, mut receiver) = ipc::ipc_connection::IpcConnection::new(stream)
+        .split()
+        .unwrap();
+
+    // First, list all sessions
+    sender.send(&ClientMessage::ListSessions)?;
+
+    let session_ids: Vec<u64> = match receiver.recv::<ServerMessage>()? {
+        ServerMessage::ListedSessions { sessions } => {
+            sessions.into_iter().map(|s| s.session_id).collect()
+        }
+        _ => return Err(color_eyre::eyre::eyre!("Failed to list sessions.")),
+    };
+
+    // Kill all sessions
+    for session_id in session_ids {
+        sender.send(&ClientMessage::KillSession { session_id })?;
+
+        // We don't need to wait for a response for each kill, just proceed with all
+    }
+
+    println!("Killed all active sessions");
+    Ok(())
+}
+
+pub async fn handle_kill_daemon() -> Result<()> {
+    if fs::metadata("/tmp/penar.sock").is_err() {
+        println!("Daemon not running.");
+        return Ok(());
+    }
+
+    // We'll use the existing method to kill the daemon
+    let stream = interprocess::local_socket::Stream::connect(ipc::consts::socket_name())?;
+    let (mut sender, mut receiver) = ipc::ipc_connection::IpcConnection::new(stream)
+        .split()
+        .unwrap();
+
+    // Send a message that tells the daemon to exit gracefully
+    sender.send(&ClientMessage::KillDaemon)?;
+
+    println!("Sent kill message to daemon");
 
     Ok(())
 }

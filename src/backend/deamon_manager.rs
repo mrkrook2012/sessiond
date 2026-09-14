@@ -77,6 +77,11 @@ impl DaemonManager {
             ClientMessage::StartSessionFromFile { file_path } => {
                 self.handle_start_session_from_file(file_path)
             }
+            ClientMessage::KillDaemon => {
+                // This should cause the daemon to exit
+                // Return a special response that the frontend can interpret
+                panic!("Got kill message, exiting");
+            }
         }
     }
 
