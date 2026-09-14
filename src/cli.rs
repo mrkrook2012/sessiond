@@ -119,9 +119,16 @@ pub async fn handle_run_command(command: String) -> Result<()> {
                 println!("Session started successfully from {}", command);
                 Ok(())
             }
+            ServerMessage::TerminalData { terminals } => Ok(()),
 
-            _ => Err(color_eyre::eyre::eyre!(
-                "Failed to start session from config file"
+            ServerMessage::Error { error } => Err(color_eyre::eyre::eyre!(
+                "Failed to start session from config file, {}",
+                error
+            )),
+
+            (val) => Err(color_eyre::eyre::eyre!(
+                "Unknown error has occured, {:?}",
+                val
             )),
         };
     }

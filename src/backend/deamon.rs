@@ -18,7 +18,7 @@ use crate::backend::terminal_manager::TerminalManager;
 use crate::backend::window_manager::WindowManager;
 use crate::ipc::consts::{SOCKET_PATH, socket_name};
 use crate::ipc::ipc_connection::IpcConnection;
-use crate::ipc::protocol::ClientMessage;
+use crate::ipc::protocol::{ClientMessage, ServerMessage};
 
 pub async fn run_daemon() -> Result<()> {
     // Check if socket exists
@@ -123,8 +123,7 @@ pub async fn run_daemon() -> Result<()> {
             {
                 Ok(res) => res,
                 Err(e) => {
-                    eprintln!("Error processing message: {}", e);
-                    continue;
+                    ServerMessage::Error { error: e.to_string() }
                 }
             };
             println!("Responded: {:?}", response);

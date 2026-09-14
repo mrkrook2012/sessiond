@@ -296,6 +296,7 @@ pub fn run_frontend() -> Result<()> {
                         st.update_screen(update.terminal_id, update.data.as_slice());
                     }
                 }
+                ServerMessage::Error { error } => eprint!("Got error back {}", error),
             }
         }
     });

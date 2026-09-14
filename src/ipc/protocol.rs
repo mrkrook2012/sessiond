@@ -77,6 +77,7 @@ pub enum ServerMessage {
     Ok,
     Pong,
     Started,
+    Error{error: String},
     UpdatedSession { session_info: SessionInfo },
 
     // This will be returned from a list sessions, and later change names, stop restart ect

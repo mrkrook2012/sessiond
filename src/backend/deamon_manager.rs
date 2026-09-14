@@ -87,13 +87,18 @@ impl DaemonManager {
 
     // TODO think about working directories and storing files
     fn handle_start_session_from_file(&mut self, file_path: String) -> Result<ServerMessage> {
+        println!("Got file");
         let input = std::fs::read_to_string(file_path)?;
         let session_yaml: YamlSession = serde_yaml::from_str(&input)?;
-
+        println!("Parsed yaml {:?}", session_yaml);
         let session_id = self
             .session_manager
             .create_empty_session(session_yaml.session_name);
+        println!("Created empty session");
+
         for window in session_yaml.windows {
+            println!("Adding window with command {}", window.command);
+
             let terminal_id = self.terminal_manager.create_terminal(100, 100); // Should be usermanager ones
             self.terminal_manager
                 .execute_command_on_terminal(terminal_id, window.command);
@@ -157,31 +162,6 @@ impl DaemonManager {
         let window_id = self.window_manager.get_window_id_from_terminal(terminal_id);
         let session_id = self.session_manager.get_session_id_from_window(window_id);
 
-        // self.user_manager.remove_terminal(terminal_id);
-        // self.window_manager
-        //     .remove_terminal_from_window(window_id, terminal_id);
-        // let terminals_left = self.window_manager.get_terminals_in_window(window_id);
-        // if terminals_left.len() == 0 {
-        //     // kill window
-        //     self.window_manager.kill_window(window_id);
-        //     self.session_manager.remove_window_from_session(window_id);
-
-        //     // Check if there are windows left
-        //     if self.session_manager.is_session_empty(session_id) {
-        //         // Session is dead, exit.
-
-        //         self.session_manager.kill_session(session_id);
-        //         return ServerMessage::ListedSessions {
-        //             sessions: self.get_all_session_info(),
-        //         };
-        //     }
-        // } else {
-        //     // Just remove terminal from tree
-        //     let window = self.window_manager.get_window_by_id_mut(window_id);
-        //     let root = window.get_window_layout_ref_mut();
-        //     root.remove_terminal(&mut self.terminal_manager, terminal_id);
-        // }
-
         ServerMessage::UpdatedSession {
             session_info: self.get_session_info_by_id(session_id),
         }
@@ -236,29 +216,6 @@ impl DaemonManager {
         ServerMessage::UpdatedSession {
             session_info: self.get_session_info_by_id(session_id),
         }
-
-        // let session_id = self.session_manager.get_session_id_from_window(window_id);
-
-        // let terminals = self.window_manager.get_terminals_in_window(window_id);
-        // for terminal_id in terminals {
-        //     self.terminal_manager.kill_terminal(terminal_id);
-        //     self.user_manager.remove_terminal(terminal_id);
-        // }
-        // self.window_manager.kill_window(window_id);
-        // let remaining_windows = self
-        //     .session_manager
-        //     .get_all_windows_from_session(session_id);
-        // let mut killed_session = false;
-        // if remaining_windows.len() == 0 {
-        //     // This was last terminal in last window, kill the session
-        //     self.session_manager.kill_session(session_id);
-        //     killed_session = true;
-        // }
-        // if killed_session {
-        //     return ServerMessage::ListedSessions {
-        //         sessions: self.get_all_session_info(),
-        //     };
-        // }
     }
 
     fn handle_create_window(&mut self, session_id: u64) -> ServerMessage {
