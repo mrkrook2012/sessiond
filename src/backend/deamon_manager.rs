@@ -86,7 +86,7 @@ impl DaemonManager {
     }
 
     // TODO think about working directories and storing files
-    fn handle_start_session_from_file(&mut self, file_path: String) -> Result<ServerMessage> {
+    fn handle_start_session_from_file(&mut self, file_path: std::path::PathBuf) -> Result<ServerMessage> {
         println!("Got file");
         let input = std::fs::read_to_string(file_path)?;
         let session_yaml: YamlSession = serde_yaml::from_str(&input)?;

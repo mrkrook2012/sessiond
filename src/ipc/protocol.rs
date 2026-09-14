@@ -1,4 +1,5 @@
 use bincode_next::{Decode, Encode};
+use std::path::PathBuf;
 
 #[derive(Decode, Encode, Debug)]
 pub enum ClientMessage {
@@ -47,7 +48,7 @@ pub enum ClientMessage {
     },
 
     StartSessionFromFile{
-        file_path: String, // This should probably be an actual path later.
+        file_path: PathBuf, // This should probably be an actual path later.
     },
 
     // Reserved for manual terminal creation
