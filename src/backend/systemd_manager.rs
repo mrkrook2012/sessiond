@@ -1,20 +1,19 @@
-use std::path::Path;
 use color_eyre::eyre::Result;
-use tokio::fs;
+use std::path::Path;
 use std::path::PathBuf;
-
+use tokio::fs;
 
 pub struct SystemdManager {}
 
 impl SystemdManager {
-
     pub async fn write_default_template_to_path(
         path: PathBuf,
         user: String,
         working_dir: &Path,
         start_command: String,
     ) -> Result<()> {
-        let file_contents = Self::get_filled_template(&user, working_dir, start_command, RestartPolicy::Always);
+        let file_contents =
+            Self::get_filled_template(&user, working_dir, start_command, RestartPolicy::No);
         fs::write(path, file_contents).await?;
 
         Ok(())
@@ -57,7 +56,6 @@ impl SystemdManager {
             .join(".config/systemd/user")
             .join(format!("{name}.service"))
     }
-
 }
 
 pub enum RestartPolicy {
