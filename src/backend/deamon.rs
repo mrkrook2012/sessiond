@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use std::fs::File;
 use std::sync::Mutex;
+use tokio::sync::Mutex as TokioMutex;
 
 use color_eyre::eyre::Result;
 use daemonize::Daemonize;
@@ -14,6 +15,7 @@ use interprocess::local_socket::{ListenerOptions, traits::Listener};
 use crate::backend::deamon_manager::DaemonManager;
 use crate::backend::mini_user_manager::MiniUserManager;
 use crate::backend::session_manager::SessionManager;
+use crate::backend::systemd_service_manager::SystemdServiceManager;
 use crate::backend::terminal_manager::TerminalManager;
 use crate::backend::window_manager::WindowManager;
 use crate::ipc::consts::{SOCKET_PATH, socket_name};
@@ -40,24 +42,18 @@ pub async fn run_daemon() -> Result<()> {
         }
     }
 
-    let stdout = File::create("./daemon.out").unwrap();
-    let stderr = File::create("./daemon.err").unwrap();
-    let daemonize = Daemonize::new().stdout(stdout).stderr(stderr);
-    println!("Trying to daemonize");
-    match daemonize.start() {
-        Ok(_) => println!("Success, daemonized"),
-        Err(e) => eprintln!("Error, {}", e),
-    }
     let user_manager = MiniUserManager::new();
     let window_manager = WindowManager::new();
     let terminal_manager = TerminalManager::new();
     let session_manager = SessionManager::new();
+    let systemd_manager = Arc::new(TokioMutex::new(SystemdServiceManager::new().await?));
 
     let daemon_manager = Arc::new(Mutex::new(DaemonManager::new(
         user_manager,
         terminal_manager,
         window_manager,
         session_manager,
+        systemd_manager,
     )));
     println!("Daemon noises");
     let listener = ListenerOptions::new()
@@ -122,9 +118,9 @@ pub async fn run_daemon() -> Result<()> {
                 .process_message(client_message)
             {
                 Ok(res) => res,
-                Err(e) => {
-                    ServerMessage::Error { error: e.to_string() }
-                }
+                Err(e) => ServerMessage::Error {
+                    error: e.to_string(),
+                },
             };
             println!("Responded: {:?}", response);
             if safe_sender.lock().unwrap().send(&response).is_err() {

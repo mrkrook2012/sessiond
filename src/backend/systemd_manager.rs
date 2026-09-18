@@ -9,15 +9,13 @@ pub struct SystemdManager {}
 impl SystemdManager {
 
     pub async fn write_default_template(
-        name: String,
+        path: PathBuf,
         user: String,
         working_dir: &Path,
         start_command: String,
     ) -> Result<()> {
         let file_contents = Self::get_filled_template(&user, working_dir, start_command, RestartPolicy::Always);
-        let file_name = Self::get_file_location(&user, &name);
-        fs::write(file_name, file_contents).await?;
-
+        fs::write(path, file_contents).await?;
 
         Ok(())
     }

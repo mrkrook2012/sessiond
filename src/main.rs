@@ -4,14 +4,19 @@ use std::fs::{self, File};
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
+use zbus_systemd::zbus::Connection;
 
 pub mod backend;
+pub mod cli;
 pub mod frontend;
 pub mod ipc;
-pub mod cli;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    println!("Trying to connect to systemd");
+    let connection = Connection::system().await?;
+    println!("Connected to systemd");
+
     let cli = cli::Cli::parse();
 
     match cli.command {
@@ -49,7 +54,7 @@ async fn main() -> Result<()> {
         }
         None => {
             // Original behavior: start daemon if not running, then run frontend
-            while fs::metadata("/tmp/penar.sock").is_err() {
+            if fs::metadata("/tmp/penar.sock").is_err() {
                 println!("Starting daemon");
                 let stdout = File::create("./daemon.out").unwrap();
                 let stderr = File::create("./daemon.err").unwrap();

@@ -1,3 +1,8 @@
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::Arc;
+
+use crate::backend::systemd_service_manager::SystemdServiceManager;
 use crate::backend::yaml::models::{YamlSession, YamlWindow};
 use crate::backend::{
     mini_user_manager::MiniUserManager, session_manager::SessionManager,
@@ -5,12 +10,14 @@ use crate::backend::{
 };
 use crate::ipc::protocol::{ClientMessage, ServerMessage, SessionInfo};
 use color_eyre::eyre::Result;
+use tokio::sync::Mutex;
 
 pub struct DaemonManager {
     user_manager: MiniUserManager,
     terminal_manager: TerminalManager,
     window_manager: WindowManager,
     session_manager: SessionManager,
+    systemd_manager: Arc<Mutex<SystemdServiceManager>>,
 }
 
 impl DaemonManager {
@@ -19,12 +26,14 @@ impl DaemonManager {
         terminal_manager: TerminalManager,
         window_manager: WindowManager,
         session_manager: SessionManager,
+        systemd_manager: Arc<Mutex<SystemdServiceManager>>,
     ) -> Self {
         Self {
             user_manager,
             terminal_manager,
             window_manager,
             session_manager,
+            systemd_manager,
         }
     }
 
@@ -71,15 +80,14 @@ impl DaemonManager {
             ClientMessage::OpenSession { session_id } => self.handle_open_session(session_id),
             ClientMessage::ChangeWindow { window_id } => Ok(self.handle_change_window(window_id)),
             ClientMessage::KillWindow { window_id } => Ok(self.handle_kill_window(window_id)),
-            ClientMessage::ExportSession { session_id } => {
-                self.handle_export_session(session_id)
-            }
+            ClientMessage::ExportSession { session_id } => self.handle_export_session(session_id),
             ClientMessage::StartSessionFromFile { file_path } => {
                 self.handle_start_session_from_file(file_path)
             }
             ClientMessage::KillDaemon => {
                 // This should cause the daemon to exit
                 // Return a special response that the frontend can interpret
+                let _suicide = Command::new("killall daemon_test").output().unwrap();
                 panic!("Got kill message, exiting");
             }
         }
@@ -113,9 +121,24 @@ impl DaemonManager {
     }
 
     fn handle_export_session(&mut self, session_id: u64) -> Result<ServerMessage> {
+        // Create .yaml file and store it
         let yaml = self.get_session_yaml(session_id);
         let session_name = self.get_session_info_by_id(session_id).session_name;
-        std::fs::write(format!("./{session_name}.yaml"), yaml)?;
+        let home = std::env::var("HOME")?;
+        let path = PathBuf::from(home)
+            .join(".local/share/deamon_test")
+            .join(format!("{session_name}.yaml"));
+        std::fs::write(&path, yaml)?;
+        
+        // Create systemd service that run that yaml.
+        let manager = Arc::clone(&self.systemd_manager);
+        tokio::spawn(async move {
+            let mut manager = manager.lock().await;
+
+            if let Err(err) = manager.create_service_from_yaml(&path).await {
+                eprintln!("failed to create systemd service: {err:?}");
+            }
+        });
 
         Ok(ServerMessage::Ok)
     }
