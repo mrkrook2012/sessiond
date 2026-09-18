@@ -126,16 +126,17 @@ impl DaemonManager {
         let session_name = self.get_session_info_by_id(session_id).session_name;
         let home = std::env::var("HOME")?;
         let path = PathBuf::from(home)
-            .join(".local/share/deamon_test")
+            .join(".local/share/daemon_test")
             .join(format!("{session_name}.yaml"));
+        println!("Writing to: {:?}", path);
         std::fs::write(&path, yaml)?;
-        
+
         // Create systemd service that run that yaml.
         let manager = Arc::clone(&self.systemd_manager);
         tokio::spawn(async move {
             let mut manager = manager.lock().await;
 
-            if let Err(err) = manager.create_service_from_yaml(&path).await {
+            if let Err(err) = manager.create_service_from_yaml(&path, session_name).await {
                 eprintln!("failed to create systemd service: {err:?}");
             }
         });

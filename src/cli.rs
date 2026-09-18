@@ -109,16 +109,20 @@ pub async fn handle_run_command(command: String) -> Result<()> {
     // if the argument points to an existing .yaml/.yml file, run it as a config
     if is_yaml_config_file(&command) {
         println!("Starting session from config file: {}", command);
-        
+
         // Check file existence and convert to absolute path
         let path = Path::new(&command);
         if !path.exists() {
-            return Err(color_eyre::eyre::eyre!("Config file does not exist: {}", command));
+            return Err(color_eyre::eyre::eyre!(
+                "Config file does not exist: {}",
+                command
+            ));
         }
-        
-        let absolute_path = std::fs::canonicalize(path)
-            .map_err(|e| color_eyre::eyre::eyre!("Failed to get absolute path for config file: {}", e))?;
 
+        let absolute_path = std::fs::canonicalize(path).map_err(|e| {
+            color_eyre::eyre::eyre!("Failed to get absolute path for config file: {}", e)
+        })?;
+        println!("Sending StartSessionFromFile message to daemon");
         sender.send(&ClientMessage::StartSessionFromFile {
             file_path: absolute_path,
         })?;

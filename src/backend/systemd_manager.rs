@@ -8,7 +8,7 @@ pub struct SystemdManager {}
 
 impl SystemdManager {
 
-    pub async fn write_default_template(
+    pub async fn write_default_template_to_path(
         path: PathBuf,
         user: String,
         working_dir: &Path,
