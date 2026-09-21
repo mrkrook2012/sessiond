@@ -111,8 +111,14 @@ impl DaemonManager {
             println!("Adding window with command {}", window.command);
 
             let terminal_id = self.terminal_manager.create_terminal(100, 100); // Should be usermanager ones
+
+            let working_dir = window.working_directory;
+            self.terminal_manager
+                .execute_command_on_terminal(terminal_id, format!("cd {working_dir}"));
+
             self.terminal_manager
                 .execute_command_on_terminal(terminal_id, window.command);
+
             let window_id = self.window_manager.create_window(terminal_id);
             self.session_manager
                 .add_window_to_session(session_id, window_id);
@@ -158,8 +164,14 @@ impl DaemonManager {
                 .get_terminal_id_from_window_id(window_id);
 
             let command = self.terminal_manager.get_command_from_terminal(terminal_id);
+            let working_directory = self
+                .terminal_manager
+                .get_working_dir_from_terminal(terminal_id);
 
-            yaml_windows.push(YamlWindow { command });
+            yaml_windows.push(YamlWindow {
+                command,
+                working_directory,
+            });
         }
 
         let yaml_session = YamlSession {

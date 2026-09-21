@@ -9,6 +9,7 @@ use vt100::Parser;
 
 pub struct Caller {
     current_command: Arc<RwLock<String>>,
+    current_pwd: Arc<RwLock<String>>,
 }
 
 impl Callbacks for Caller {
@@ -37,20 +38,29 @@ impl Callbacks for Caller {
                 println!("command finished");
             }
 
+            Some(b"P") => {
+                if let Some(pwd) = params.get(2).map(|v| String::from_utf8_lossy(v)) {
+                    *self.current_pwd.write().unwrap() = pwd.clone().into_owned();
+                    println!("command pwd: {:?}", pwd);
+                }
+            }
+
             _ => {}
         }
     }
 }
+
 pub struct VirtualTerminal {
     id: u64,
     parser: Arc<Mutex<Parser<Caller>>>,
-    pair: PtyPair, // master and slave of Pty
+    pair: PtyPair,
     writer: Box<dyn std::io::Write + Send>,
     width_factor: f32,
     height_factor: f32,
     global_rows: u16,
     global_cols: u16,
     current_command: Arc<RwLock<String>>,
+    current_pwd: Arc<RwLock<String>>,
 }
 
 impl VirtualTerminal {
@@ -64,15 +74,21 @@ impl VirtualTerminal {
                 pixel_width: 0,
             })
             .unwrap();
+
         pair.slave
             .spawn_command(CommandBuilder::new("/bin/bash"))
             .unwrap();
+
         let mut writer = pair.master.take_writer().unwrap();
+
         let current_command = Arc::new(RwLock::new(String::new()));
+        let current_pwd = Arc::new(RwLock::new(String::new()));
 
         let caller = Caller {
             current_command: Arc::clone(&current_command),
+            current_pwd: Arc::clone(&current_pwd),
         };
+
         let parser = Arc::new(Mutex::new(Parser::new_with_callbacks(
             global_rows,
             global_cols,
@@ -80,14 +96,14 @@ impl VirtualTerminal {
             caller,
         )));
 
-        // TODO
-        // Temporary workaround, this should be owned seperately
         let reader = pair.master.try_clone_reader().unwrap();
         let parser2 = parser.clone();
+
         tokio::task::spawn_blocking(move || {
             let parser = parser2;
             let mut reader = reader;
             let mut buffer = [0u8; 8192];
+
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => break,
@@ -107,6 +123,7 @@ impl VirtualTerminal {
         }
 
         println!("Injecting bash hooks");
+
         let setup = r#"
 __osc133_command_start() {
     case "$BASH_COMMAND" in
@@ -115,6 +132,7 @@ __osc133_command_start() {
             ;;
     esac
 
+    printf '\033]133;P;%s\007' "$PWD"
     printf '\033]133;C;%s\007' "$BASH_COMMAND"
 }
 
@@ -124,20 +142,21 @@ trap '__osc133_command_start' DEBUG
         writer.write_all(setup.as_bytes()).unwrap();
         writer.write_all(b"\n").unwrap();
         writer.flush().unwrap();
-        writer.write_all(b"clear\n").unwrap();
 
+        writer.write_all(b"clear\n").unwrap();
         writer.flush().unwrap();
 
         Self {
-            id: id,
-            parser: parser,
-            pair: pair,
-            writer: writer,
+            id,
+            parser,
+            pair,
+            writer,
             width_factor: 1.0,
             height_factor: 1.0,
             global_rows,
             global_cols,
             current_command,
+            current_pwd,
         }
     }
 
@@ -154,8 +173,27 @@ trap '__osc133_command_start' DEBUG
         self.writer.write_all(b"\r").unwrap();
         self.writer.flush().unwrap();
     }
+
     pub fn get_screen(&self) -> Vec<u8> {
         self.parser.lock().unwrap().screen().state_formatted()
+    }
+
+    pub fn get_current_command(&self) -> String {
+        self.current_command.read().unwrap().to_string()
+    }
+
+    pub fn get_current_pwd(&self) -> String {
+        self.current_pwd.read().unwrap().to_string()
+    }
+
+    pub fn get_ratio(&self) -> (f32, f32) {
+        (self.height_factor, self.width_factor)
+    }
+
+    pub fn set_ratio(&mut self, height_factor: f32, width_factor: f32) {
+        self.height_factor = height_factor;
+        self.width_factor = width_factor;
+        self.recalculate_size();
     }
 
     pub fn recalculate_size(&mut self) {
@@ -170,30 +208,18 @@ trap '__osc133_command_start' DEBUG
         self.global_cols = cols;
     }
 
-    pub fn get_current_command(&self) -> String {
-        self.current_command.read().unwrap().to_string()
-    }
-
-    pub fn get_ratio(&self) -> (f32, f32) {
-        (self.height_factor, self.width_factor)
-    }
-    pub fn set_ratio(&mut self, height_factor: f32, width_factor: f32) {
-        self.height_factor = height_factor;
-        self.width_factor = width_factor;
-        self.recalculate_size();
-    }
-
     fn set_size(&mut self, rows: u16, cols: u16) {
         self.parser
             .lock()
             .unwrap()
             .screen_mut()
             .set_size(rows, cols);
+
         self.pair
             .master
             .resize(PtySize {
-                rows: rows,
-                cols: cols,
+                rows,
+                cols,
                 pixel_height: 0,
                 pixel_width: 0,
             })

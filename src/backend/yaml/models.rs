@@ -11,4 +11,5 @@ impl YamlSession {}
 #[derive(Debug, Serialize, Deserialize)]
 pub struct YamlWindow {
     pub command: String,
+    pub working_directory: String,
 }

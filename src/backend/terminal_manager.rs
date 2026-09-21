@@ -39,6 +39,10 @@ impl TerminalManager {
         self.get_terminal_from_id(terminal_id).get_current_command()
     }
 
+    pub fn get_working_dir_from_terminal(&self, terminal_id: u64) -> String {
+        self.get_terminal_from_id(terminal_id).get_current_pwd()
+    }
+
     pub fn resize_all_terminals(&mut self, rows: u16, cols: u16) {
         for (_terminal_id, terminal) in &mut self.terminals {
 
