@@ -1,0 +1,18 @@
+todo:
+  - Fix tests
+  - Add unit tests
+  - publish mk_utils to crates.io
+  - make CI/CD pipeline
+  - Finalize systemd integration
+  - Clean up Async work
+  - Multi user 
+  - Optimize screen transfer
+  - Rewrite frontend
+  - Remove some Unwrap()
+  - Look at IPC solution
+  - Improve error handling in the frontend. 
+  - Improve startup robustness and error handling
+  - Understand the macro language
+  - Clean up build warnings
+  - Look into supporting fish or zsh
+
