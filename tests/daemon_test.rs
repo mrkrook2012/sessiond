@@ -31,6 +31,7 @@ fn test_daemon_start_kill() {
     println!("Kill daemon output: {:?}", kill_output);
 
     // Give the system time to clean up
+    // TODO, this is ass as wellc
     thread::sleep(Duration::from_millis(100));
 
     // 3. Start a new daemon with the start-daemon subcommand
