@@ -1,6 +1,8 @@
 use bincode_next::{Decode, Encode};
 use std::path::PathBuf;
 
+use crate::backend::{session_manager::SessionId, terminal_manager::TerminalId, window_manager::WindowId};
+
 #[derive(Decode, Encode, Debug)]
 pub enum ClientMessage {
     Ping,
@@ -19,13 +21,13 @@ pub enum ClientMessage {
     },
 
     CreateWindow {
-        session_id: u64,
+        session_id: SessionId,
     },
     KillWindow {
-        window_id: u64,
+        window_id: WindowId,
     },
     ChangeWindow {
-        window_id: u64,
+        window_id: WindowId,
     },
 
     // Is the start command, will start a session with 1 terminal running shell
@@ -35,40 +37,40 @@ pub enum ClientMessage {
         session_name: Option<String>,
     },
     OpenSession {
-        session_id: u64,
+        session_id: SessionId,
     },
     ListSessions,
     ExitSession,
     KillSession {
-        session_id: u64,
+        session_id: SessionId,
     },
 
     ExportSession {
-        session_id: u64,
+        session_id: SessionId,
     },
 
-    StartSessionFromFile{
+    StartSessionFromFile {
         file_path: PathBuf,
     },
 
     // Reserved for manual terminal creation
     // Should be unused, create new window is only way.
     CreateTerminal {
-        start_terminal_id: u64,
+        start_terminal_id: TerminalId,
         working_dir: String,
         command: Option<String>,
     },
 
     // Should not be used, kill the window instead.
     KillTerminal {
-        terminal_id: u64,
+        terminal_id: TerminalId,
     },
 
     WriteTerminal {
-        terminal_id: u64,
+        terminal_id: TerminalId,
         data: Vec<u8>,
     },
-    
+
     /// Kill the daemon process
     KillDaemon,
 }
@@ -78,7 +80,7 @@ pub enum ServerMessage {
     Ok,
     Pong,
     Started,
-    Error{error: String},
+    Error { error: String },
     UpdatedSession { session_info: SessionInfo },
 
     // This will be returned from a list sessions, and later change names, stop restart ect
@@ -101,19 +103,19 @@ pub enum ServerMessage {
 
 #[derive(Decode, Encode, Debug, Clone)]
 pub struct SessionInfo {
-    pub session_id: u64,
+    pub session_id: SessionId,
     pub session_name: String,
     pub windows_info: Vec<WindowInfo>,
 }
 
 #[derive(Decode, Encode, Debug, Clone)]
 pub struct WindowInfo {
-    pub window_id: u64,
-    pub terminal_id: u64,
+    pub window_id: WindowId,
+    pub terminal_id: TerminalId,
 }
 
 impl WindowInfo {
-    pub fn new(window_id: u64, terminal_id: u64) -> Self {
+    pub fn new(window_id: WindowId, terminal_id: TerminalId) -> Self {
         Self {
             window_id,
             terminal_id,
@@ -122,7 +124,7 @@ impl WindowInfo {
 }
 
 impl SessionInfo {
-    pub fn new(session_id: u64, session_name: String, windows_info: Vec<WindowInfo>) -> Self {
+    pub fn new(session_id: SessionId, session_name: String, windows_info: Vec<WindowInfo>) -> Self {
         Self {
             session_id,
             session_name,
@@ -133,6 +135,6 @@ impl SessionInfo {
 
 #[derive(Decode, Encode, Debug)]
 pub struct TerminalUpdate {
-    pub terminal_id: u64,
+    pub terminal_id: TerminalId,
     pub data: Vec<u8>,
 }

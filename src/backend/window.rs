@@ -1,12 +1,12 @@
-use crate::ipc::protocol::WindowInfo;
+use crate::{backend::{terminal_manager::TerminalId, window_manager::WindowId}, ipc::protocol::WindowInfo};
 
 pub struct Window {
-    pub terminal_id: u64, // terminal_id
-    window_id: u64,
+    pub terminal_id: TerminalId, // terminal_id
+    window_id: WindowId,
 }
 
 impl Window {
-    pub fn new(terminal_id: u64, window_id: u64) -> Self {
+    pub fn new(terminal_id: TerminalId, window_id: WindowId) -> Self {
         Self {
             terminal_id,
             window_id,

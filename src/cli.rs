@@ -7,6 +7,7 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
+use crate::backend::session_manager::SessionId;
 use crate::ipc;
 use crate::ipc::protocol::ClientMessage;
 use crate::ipc::protocol::ServerMessage;
@@ -305,7 +306,7 @@ pub async fn handle_kill_all_sessions() -> Result<()> {
     // First, list all sessions
     sender.send(&ClientMessage::ListSessions)?;
 
-    let session_ids: Vec<u64> = match receiver.recv::<ServerMessage>()? {
+    let session_ids: Vec<SessionId> = match receiver.recv::<ServerMessage>()? {
         ServerMessage::ListedSessions { sessions } => {
             sessions.into_iter().map(|s| s.session_id).collect()
         }

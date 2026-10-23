@@ -20,6 +20,7 @@ fn check_daemon_err(step: &str) {
     );
 }
 
+// TODO FIX TESTS
 #[test]
 fn test_daemon_start_kill() {
     // 1. Cleanup any existing daemon processes

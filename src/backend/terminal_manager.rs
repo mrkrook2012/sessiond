@@ -1,18 +1,27 @@
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
+use bincode_next::{Decode, Encode};
+
+use mk_utils::AssignOps;
 
 use crate::backend::virtual_terminal::VirtualTerminal;
 use crate::ipc::protocol::*;
 // If a second person inspects the same session, we will not resize and their frontend will adapt
 
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, AssignOps, Encode, Decode)]
+pub struct TerminalId(u64);
+
 pub struct TerminalManager {
-    last_id: u64,
-    terminals: HashMap<u64, VirtualTerminal>,
+    last_id: TerminalId,
+    free_ids: BinaryHeap<Reverse<TerminalId>>,
+    terminals: HashMap<TerminalId, VirtualTerminal>,
 }
 
 impl TerminalManager {
     pub fn new() -> Self {
         Self {
-            last_id: 0,
+            last_id: TerminalId(0),
+            free_ids: BinaryHeap::new(),
             terminals: HashMap::new(),
         }
     }
@@ -27,60 +36,68 @@ impl TerminalManager {
             .collect()
     }
 
-    pub fn get_data_from_terminal(&self, terminal_id: u64) -> TerminalUpdate {
+    pub fn get_data_from_terminal(&self, terminal_id: TerminalId) -> TerminalUpdate {
         let term = self.get_terminal_from_id(terminal_id);
         TerminalUpdate {
-            terminal_id,
+            terminal_id: terminal_id,
             data: term.get_screen(),
         }
     }
 
-    pub fn get_command_from_terminal(&self, terminal_id: u64) -> String {
+    pub fn get_command_from_terminal(&self, terminal_id: TerminalId) -> String {
         self.get_terminal_from_id(terminal_id).get_current_command()
     }
 
-    pub fn get_working_dir_from_terminal(&self, terminal_id: u64) -> String {
+    pub fn get_working_dir_from_terminal(&self, terminal_id: TerminalId) -> String {
         self.get_terminal_from_id(terminal_id).get_current_pwd()
     }
 
     pub fn resize_all_terminals(&mut self, rows: u16, cols: u16) {
         for (_terminal_id, terminal) in &mut self.terminals {
-
             terminal.set_global_size(rows, cols);
             terminal.recalculate_size();
         }
     }
 
-    pub fn send_bytes_to_terminal(&mut self, terminal_id: u64, bytes: &[u8]) {
+    pub fn send_bytes_to_terminal(&mut self, terminal_id: TerminalId, bytes: &[u8]) {
         self.get_terminal_from_id_mut(terminal_id)
             .process_input(bytes);
     }
 
-    pub fn execute_command_on_terminal(&mut self, terminal_id: u64, command: String) {
+    pub fn execute_command_on_terminal(&mut self, terminal_id: TerminalId, command: String) {
         self.get_terminal_from_id_mut(terminal_id)
             .execute_command(command);
     }
 
-    pub fn kill_terminal(&mut self, terminal_id: u64) {
+    pub fn kill_terminal(&mut self, terminal_id: TerminalId) {
+        self.free_ids.push(Reverse(terminal_id));
         self.terminals.remove(&terminal_id).unwrap();
     }
 
-    pub fn create_terminal(&mut self, rows: u16, cols: u16) -> u64 {
-        self.last_id += 1;
-
-        let terminal = VirtualTerminal::new(self.last_id, rows, cols);
-        self.terminals.insert(self.last_id, terminal);
-        self.last_id
+    pub fn create_terminal(&mut self, rows: u16, cols: u16) -> TerminalId {
+        let id = self.generate_id();
+        let terminal = VirtualTerminal::new(id, rows, cols);
+        self.terminals.insert(id, terminal);
+        id
     }
 
-    pub fn get_terminal_from_id(&self, terminal_id: u64) -> &VirtualTerminal {
+    pub fn get_terminal_from_id(&self, terminal_id: TerminalId) -> &VirtualTerminal {
         self.terminals
             .get(&terminal_id)
             .expect("Terminal with id should exist")
     }
-    pub fn get_terminal_from_id_mut(&mut self, terminal_id: u64) -> &mut VirtualTerminal {
+    pub fn get_terminal_from_id_mut(&mut self, terminal_id: TerminalId) -> &mut VirtualTerminal {
         self.terminals
             .get_mut(&terminal_id)
             .expect("Terminal with id should exist")
+    }
+
+    fn generate_id(&mut self) -> TerminalId {
+        if let Some(Reverse(id)) = self.free_ids.pop() {
+            id
+        } else {
+            self.last_id += TerminalId(1);
+            self.last_id
+        }
     }
 }

@@ -1,8 +1,10 @@
+use crate::backend::{session_manager::SessionId, terminal_manager::TerminalId};
+
 pub struct MiniUserManager {
     rows: u16,
     cols: u16,
-    current_session_id: u64,
-    visible_terminals: Vec<u64>, //Terminal Id
+    current_session_id: SessionId,
+    visible_terminals: Vec<TerminalId>, 
 }
 
 impl MiniUserManager {
@@ -10,9 +12,10 @@ impl MiniUserManager {
         Self {
             rows: 100,
             cols: 100,
-            current_session_id: 0,
+            current_session_id: SessionId(1),
             visible_terminals: Vec::new(),
         }
+        
     }
 
     pub fn get_dimensions(&self) -> (u16, u16) {
@@ -27,11 +30,11 @@ impl MiniUserManager {
         self.rows = rows;
         self.cols = cols;
     }
-    pub fn add_terminal(&mut self, terminal_id: u64) {
+    pub fn add_terminal(&mut self, terminal_id: TerminalId) {
         self.visible_terminals.push(terminal_id);
     }
 
-    pub fn remove_terminal(&mut self, terminal_id: u64) {
+    pub fn remove_terminal(&mut self, terminal_id: TerminalId) {
         if let Some(pos) = self
             .visible_terminals
             .iter()
@@ -40,11 +43,11 @@ impl MiniUserManager {
             self.visible_terminals.remove(pos);
         }
     }
-    pub fn get_current_session_id(&self) -> u64 {
+    pub fn get_current_session_id(&self) -> SessionId {
         self.current_session_id
     }
 
-    pub fn set_current_session_id(&mut self, session_id: u64) {
+    pub fn set_current_session_id(&mut self, session_id: SessionId) {
         self.current_session_id = session_id
     }
 
@@ -52,7 +55,7 @@ impl MiniUserManager {
         self.visible_terminals.clear()
     }
 
-    pub fn get_all_terminals(&self) -> Vec<u64> {
+    pub fn get_all_terminals(&self) -> Vec<TerminalId> {
         self.visible_terminals.clone()
     }
 }

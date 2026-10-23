@@ -1,56 +1,77 @@
-use std::collections::HashMap;
+use std::{
+    cmp::Reverse,
+    collections::{BinaryHeap, HashMap},
+};
+
+use bincode_next::{Decode, Encode};
+use mk_utils::AssignOps;
 
 use crate::{
-    backend::window::Window,
+    backend::{terminal_manager::TerminalId, window::Window},
     ipc::protocol::WindowInfo,
 };
 
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, AssignOps, Encode, Decode)]
+pub struct WindowId(u64);
+
 pub struct WindowManager {
-    last_id: u64,
-    windows: HashMap<u64, Window>, //window_id
+    last_id: WindowId,
+    free_ids: BinaryHeap<Reverse<WindowId>>,
+    windows: HashMap<WindowId, Window>, //window_id
 }
 
 impl WindowManager {
     pub fn new() -> Self {
         Self {
-            last_id: 0,
+            last_id: WindowId(0),
+            free_ids: BinaryHeap::new(),
             windows: HashMap::new(),
         }
     }
 
-    pub fn create_window(&mut self, terminal_id: u64) -> u64 {
-        self.last_id += 1;
-        let window = Window::new(terminal_id, self.last_id);
-        self.windows.insert(self.last_id.clone(), window);
-        self.last_id
+    pub fn create_window(&mut self, terminal_id: TerminalId) -> WindowId {
+        let id = self.generate_id();
+        let window = Window::new(terminal_id, id);
+        self.windows.insert(id, window);
+        id
     }
 
-    pub fn kill_window(&mut self, window_id: u64) {
+    pub fn kill_window(&mut self, window_id: WindowId) {
+        self.free_ids.push(Reverse(window_id));
         self.windows.remove(&window_id).unwrap();
     }
 
-    pub fn get_window_id_from_terminal(&self, terminal_id: u64) -> u64 {
+    pub fn get_window_id_from_terminal(&self, terminal_id: TerminalId) -> Option<WindowId> {
         for (id, window) in &self.windows {
             if window.terminal_id == terminal_id {
-                return *id;
+                return Some(*id);
             }
         }
-        0
+        None
     }
 
-    pub fn get_terminal_id_from_window_id(&self, window_id: u64) -> u64 {
+    pub fn get_terminal_id_from_window_id(&self, window_id: WindowId) -> TerminalId {
         self.windows.get(&window_id).unwrap().terminal_id
     }
 
-    pub fn get_window_info_by_id(&self, window_id: u64) -> WindowInfo {
+    pub fn get_window_info_by_id(&self, window_id: WindowId) -> WindowInfo {
         let window = self.get_window_by_id(window_id);
         window.get_window_info()
     }
 
-    pub fn get_window_by_id(&self, window_id: u64) -> &Window {
+    pub fn get_window_by_id(&self, window_id: WindowId) -> &Window {
         self.windows.get(&window_id).unwrap()
     }
-    pub fn get_window_by_id_mut(&mut self, window_id: u64) -> &mut Window {
+    pub fn get_window_by_id_mut(&mut self, window_id: WindowId) -> &mut Window {
         self.windows.get_mut(&window_id).unwrap()
+    }
+
+    fn generate_id(&mut self) -> WindowId {
+        if let Some(Reverse(id)) = self.free_ids.pop() {
+            id
+        } else {
+            self.last_id += WindowId(1);
+            self.last_id
+        }
     }
 }

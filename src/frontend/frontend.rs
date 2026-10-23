@@ -18,6 +18,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs};
 
+use crate::backend::terminal_manager::TerminalId;
 use crate::frontend::slop_terrm_widget::TerminalWidget;
 use crate::ipc::consts::socket_name;
 use crate::ipc::ipc_connection::IpcConnection;
@@ -59,7 +60,7 @@ struct AppState {
     // when to replace it (switched windows) vs. just resize it (same
     // window, new size). Scrollback is lost when switching away from a
     // window, same trade-off as before.
-    terminal_widget: Option<(u64, TerminalWidget)>,
+    terminal_widget: Option<(TerminalId, TerminalWidget)>,
     input_mode: InputMode,
     status: String,
     should_quit: bool,
@@ -92,7 +93,7 @@ impl AppState {
             .get(self.current_window_index)
     }
 
-    fn current_terminal_id(&self) -> Option<u64> {
+    fn current_terminal_id(&self) -> Option<TerminalId> {
         self.terminal_widget.as_ref().map(|(id, _)| *id)
     }
 
@@ -122,7 +123,7 @@ impl AppState {
         }
     }
 
-    fn update_screen(&mut self, terminal_id: u64, data: &[u8]) {
+    fn update_screen(&mut self, terminal_id: TerminalId, data: &[u8]) {
         if let Some((id, widget)) = &mut self.terminal_widget {
             if *id == terminal_id {
                 widget.update_screen(data);
@@ -825,7 +826,7 @@ fn draw_session_list(frame: &mut ratatui::Frame, area: Rect, st: &AppState) {
             .iter()
             .map(|s| {
                 ListItem::new(format!(
-                    "{} (id {}, {} window(s))",
+                    "{} (id {:?}, {} window(s))",
                     s.session_name,
                     s.session_id,
                     s.windows_info.len()

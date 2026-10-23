@@ -7,6 +7,8 @@ use std::time::Duration;
 use vt100::Callbacks;
 use vt100::Parser;
 
+use crate::backend::terminal_manager::TerminalId;
+
 pub struct Caller {
     current_command: Arc<RwLock<String>>,
     current_pwd: Arc<RwLock<String>>,
@@ -51,7 +53,7 @@ impl Callbacks for Caller {
 }
 
 pub struct VirtualTerminal {
-    id: u64,
+    id: TerminalId,
     parser: Arc<Mutex<Parser<Caller>>>,
     pair: PtyPair,
     writer: Box<dyn std::io::Write + Send>,
@@ -64,7 +66,7 @@ pub struct VirtualTerminal {
 }
 
 impl VirtualTerminal {
-    pub fn new(id: u64, global_rows: u16, global_cols: u16) -> Self {
+    pub fn new(id: TerminalId, global_rows: u16, global_cols: u16) -> Self {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -125,19 +127,19 @@ impl VirtualTerminal {
         println!("Injecting bash hooks");
 
         let setup = r#"
-__osc133_command_start() {
-    case "$BASH_COMMAND" in
-        __osc133_*|printf*|local*|trap*|PROMPT_COMMAND*)
-            return
-            ;;
-    esac
+        __osc133_command_start() {
+            case "$BASH_COMMAND" in
+                __osc133_*|printf*|local*|trap*|PROMPT_COMMAND*)
+                    return
+                    ;;
+            esac
 
-    printf '\033]133;P;%s\007' "$PWD"
-    printf '\033]133;C;%s\007' "$BASH_COMMAND"
-}
+            printf '\033]133;P;%s\007' "$PWD"
+            printf '\033]133;C;%s\007' "$BASH_COMMAND"
+        }
 
-trap '__osc133_command_start' DEBUG
-"#;
+        trap '__osc133_command_start' DEBUG
+        "#;
 
         writer.write_all(setup.as_bytes()).unwrap();
         writer.write_all(b"\n").unwrap();
@@ -160,7 +162,7 @@ trap '__osc133_command_start' DEBUG
         }
     }
 
-    pub fn get_id(&self) -> u64 {
+    pub fn get_id(&self) -> TerminalId {
         self.id
     }
 

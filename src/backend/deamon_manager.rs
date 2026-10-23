@@ -2,7 +2,10 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 
+use crate::backend::session_manager::SessionId;
 use crate::backend::systemd_service_manager::SystemdServiceManager;
+use crate::backend::terminal_manager::TerminalId;
+use crate::backend::window_manager::WindowId;
 use crate::backend::yaml::models::{YamlSession, YamlWindow};
 use crate::backend::{
     mini_user_manager::MiniUserManager, session_manager::SessionManager,
@@ -64,6 +67,7 @@ impl DaemonManager {
             ClientMessage::ExitSession => Ok(self.handle_exit_session()),
             ClientMessage::KillSession { session_id } => Ok(self.handle_kill_session(session_id)),
             ClientMessage::CreateTerminal {
+                //TODO not needed?
                 start_terminal_id: _,
                 working_dir: _,
                 command: _,
@@ -126,7 +130,7 @@ impl DaemonManager {
         Ok(ServerMessage::Ok)
     }
 
-    fn handle_export_session(&mut self, session_id: u64) -> Result<ServerMessage> {
+    fn handle_export_session(&mut self, session_id: SessionId) -> Result<ServerMessage> {
         // Create .yaml file and store it
         let yaml = self.get_session_yaml(session_id);
         let session_name = self.get_session_info_by_id(session_id).session_name;
@@ -150,7 +154,7 @@ impl DaemonManager {
         Ok(ServerMessage::Ok)
     }
 
-    fn get_session_yaml(&self, session_id: u64) -> String {
+    fn get_session_yaml(&self, session_id: SessionId) -> String {
         let session = self.session_manager.get_session_by_id(session_id);
         let windows = self
             .session_manager
@@ -181,7 +185,7 @@ impl DaemonManager {
 
         serde_yaml::to_string(&yaml_session).unwrap()
     }
-    fn handle_change_window(&mut self, window_id: u64) -> ServerMessage {
+    fn handle_change_window(&mut self, window_id: WindowId) -> ServerMessage {
         self.user_manager.clear_all();
         let terminal_id = self
             .window_manager
@@ -196,22 +200,22 @@ impl DaemonManager {
         ServerMessage::Ok
     }
 
-    fn handle_kill_terminal(&mut self, terminal_id: u64) -> ServerMessage {
+    fn handle_kill_terminal(&mut self, terminal_id: TerminalId) -> ServerMessage {
         // Unsub from terminal
         // Kill terminal
         // Check window terminal count, if 1 kill window, else rm window from tree
         // check window count in session, if zero kill session
-        let window_id = self.window_manager.get_window_id_from_terminal(terminal_id);
-        let session_id = self.session_manager.get_session_id_from_window(window_id);
+        let window_id = self.window_manager.get_window_id_from_terminal(terminal_id).unwrap();
+        let session_id = self.session_manager.get_session_id_from_window(window_id).unwrap();
 
         ServerMessage::UpdatedSession {
             session_info: self.get_session_info_by_id(session_id),
         }
     }
 
-    fn handle_kill_session(&mut self, session_id: u64) -> ServerMessage {
+    fn handle_kill_session(&mut self, session_id: SessionId) -> ServerMessage {
         // This command will only be given from the list selection
-        let mut terminal_ids: Vec<u64> = Vec::new();
+        let mut terminal_ids: Vec<TerminalId> = Vec::new();
         let windows = self
             .session_manager
             .get_all_windows_from_session(session_id);
@@ -232,8 +236,8 @@ impl DaemonManager {
         ServerMessage::ListedSessions { sessions }
     }
 
-    fn handle_kill_window(&mut self, window_id: u64) -> ServerMessage {
-        let session_id = self.session_manager.get_session_id_from_window(window_id);
+    fn handle_kill_window(&mut self, window_id: WindowId) -> ServerMessage {
+        let session_id = self.session_manager.get_session_id_from_window(window_id).unwrap();
         let terminal_id = self
             .window_manager
             .get_terminal_id_from_window_id(window_id);
@@ -248,7 +252,7 @@ impl DaemonManager {
             .session_manager
             .get_all_windows_from_session(session_id);
 
-        if remaining.len() == 0 {
+        if remaining.len() == 0 { //TODO This is ass,
             self.session_manager.kill_session(session_id);
             return ServerMessage::ListedSessions {
                 sessions: self.get_all_session_info(),
@@ -260,7 +264,7 @@ impl DaemonManager {
         }
     }
 
-    fn handle_create_window(&mut self, session_id: u64) -> ServerMessage {
+    fn handle_create_window(&mut self, session_id: SessionId) -> ServerMessage {
         // Create new terminal
         // Add new terminal to window manager
         // Switch to new window
@@ -282,7 +286,7 @@ impl DaemonManager {
         ServerMessage::Ok
     }
 
-    fn handle_open_session(&mut self, session_id: u64) -> Result<ServerMessage> {
+    fn handle_open_session(&mut self, session_id: SessionId) -> Result<ServerMessage> {
         // Get sessions
         // Get first window in session
         // get terminals in first window
@@ -315,7 +319,7 @@ impl DaemonManager {
         crate::ipc::protocol::ServerMessage::Ok
     }
 
-    fn handle_write(&mut self, terminal_id: u64, data: Vec<u8>) -> ServerMessage {
+    fn handle_write(&mut self, terminal_id: TerminalId, data: Vec<u8>) -> ServerMessage {
         self.terminal_manager
             .send_bytes_to_terminal(terminal_id, data.as_slice());
         ServerMessage::Ok
@@ -372,7 +376,7 @@ impl DaemonManager {
             })
             .collect()
     }
-    fn get_session_info_by_id(&self, session_id: u64) -> SessionInfo {
+    fn get_session_info_by_id(&self, session_id: SessionId) -> SessionInfo {
         let session = self.session_manager.get_session_by_id(session_id);
         SessionInfo::new(
             session_id,
