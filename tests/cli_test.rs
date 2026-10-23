@@ -21,7 +21,7 @@ fn check_daemon_err(step: &str) {
 #[test]
 fn test_cli_lifecycle() {
     // 1. Cleanup
-    let _ = fs::remove_file("/tmp/penar.sock");
+    let _ = fs::remove_file("/tmp/daemon_test.sock");
     let _ = fs::remove_file("/tmp/penar2.sock");
 
     // 2. Run a session
@@ -93,6 +93,6 @@ fn test_cli_lifecycle() {
     );
 
     // Cleanup sockets again just in case
-    let _ = fs::remove_file("/tmp/penar.sock");
+    let _ = fs::remove_file("/tmp/daemon_test.sock");
     let _ = fs::remove_file("/tmp/penar2.sock");
 }

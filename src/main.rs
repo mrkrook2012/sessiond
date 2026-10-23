@@ -13,16 +13,12 @@ pub mod ipc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("Trying to connect to systemd");
-    let connection = Connection::system().await?;
-    println!("Connected to systemd");
-
     let cli = cli::Cli::parse();
 
     match cli.command {
         Some(cli::Commands::StartDaemon) => {
             // Clean up any stale socket file
-            let _ = fs::remove_file("/tmp/penar.sock");
+            let _ = fs::remove_file("/tmp/daemon_test.sock");
             let result = crate::backend::deamon::run_daemon().await;
             match result {
                 Ok(()) => {
@@ -54,7 +50,7 @@ async fn main() -> Result<()> {
         }
         None => {
             // Original behavior: start daemon if not running, then run frontend
-            if fs::metadata("/tmp/penar.sock").is_err() {
+            if fs::metadata("/tmp/daemon_test.sock").is_err() {
                 println!("Starting daemon");
                 let stdout = File::create("./daemon.out").unwrap();
                 let stderr = File::create("./daemon.err").unwrap();

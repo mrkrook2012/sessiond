@@ -23,16 +23,16 @@ fn check_daemon_err(step: &str) {
 #[test]
 fn test_daemon_start_kill() {
     // 1. Cleanup any existing daemon processes
-    let _ = fs::remove_file("/tmp/penar.sock");
-    
+    let _ = fs::remove_file("/tmp/daemon_test.sock");
+
     // 2. Kill any running daemon process if it exists
     let kill_output = run_cli(vec!["kill-daemon"]);
     println!("Kill daemon output: {:?}", kill_output);
-    
+
     // Give the system time to clean up
     thread::sleep(Duration::from_millis(100));
-    
-    // 3. Start a new daemon with the start-daemon subcommand  
+
+    // 3. Start a new daemon with the start-daemon subcommand
     let start_output = run_cli(vec!["start-daemon"]);
     assert!(
         start_output.status.success(),
@@ -40,12 +40,15 @@ fn test_daemon_start_kill() {
         String::from_utf8_lossy(&start_output.stderr)
     );
     check_daemon_err("after start daemon");
-    
+
     // 4. Verify daemon is running by checking for socket file
-    let has_socket = fs::metadata("/tmp/penar.sock").is_ok();
-    assert!(has_socket, "Daemon socket file not found after starting daemon");
-    
-    // 5. Kill the daemon process 
+    let has_socket = fs::metadata("/tmp/daemon_test.sock").is_ok();
+    assert!(
+        has_socket,
+        "Daemon socket file not found after starting daemon"
+    );
+
+    // 5. Kill the daemon process
     let kill_output = run_cli(vec!["kill-daemon"]);
     assert!(
         kill_output.status.success(),
@@ -53,10 +56,13 @@ fn test_daemon_start_kill() {
         String::from_utf8_lossy(&kill_output.stderr)
     );
     check_daemon_err("after kill daemon");
-    
+
     // 6. Verify the daemon is no longer running by checking socket file is gone
-    let has_socket_after = fs::metadata("/tmp/penar.sock").is_ok();
-    assert!(!has_socket_after, "Daemon socket file still exists after killing daemon");
-    
+    let has_socket_after = fs::metadata("/tmp/daemon_test.sock").is_ok();
+    assert!(
+        !has_socket_after,
+        "Daemon socket file still exists after killing daemon"
+    );
+
     println!("Daemon start and kill test passed successfully!");
 }

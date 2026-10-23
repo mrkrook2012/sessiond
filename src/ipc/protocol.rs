@@ -48,7 +48,7 @@ pub enum ClientMessage {
     },
 
     StartSessionFromFile{
-        file_path: PathBuf, // This should probably be an actual path later.
+        file_path: PathBuf,
     },
 
     // Reserved for manual terminal creation

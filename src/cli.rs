@@ -56,22 +56,14 @@ pub fn is_yaml_config_file(arg: &str) -> bool {
 }
 
 pub fn generate_random_session_name() -> String {
-    let names = vec![
-        "Henk",
-        "Dikke Lul",
-        "Bink",
-        "Aardappel",
-        "shiroi bakemono",
-        "people in paris",
-    ];
+    let names = vec!["henk", "bink", "aardappel", "piet", "jannes"];
     let nr = rand::random_range(0..names.len());
-    let random_name = names.get(nr).unwrap();
-    format!("session-{}", random_name)
+    names.get(nr).unwrap().to_string()
 }
 
 pub async fn handle_run_command(command: String) -> Result<()> {
     // Check if daemon is running
-    if fs::metadata("/tmp/penar.sock").is_err() {
+    if fs::metadata("/tmp/daemon_test.sock").is_err() {
         println!("Daemon not running. Starting daemon...");
         let stdout = File::create("./daemon.out").unwrap();
         let stderr = File::create("./daemon.err").unwrap();
@@ -92,11 +84,11 @@ pub async fn handle_run_command(command: String) -> Result<()> {
 
         // Wait for daemon to be ready
         let mut attempts = 0;
-        while fs::metadata("/tmp/penar.sock").is_err() && attempts < 10 {
+        while fs::metadata("/tmp/daemon_test.sock").is_err() && attempts < 10 {
             thread::sleep(Duration::from_millis(500));
             attempts += 1;
         }
-        if fs::metadata("/tmp/penar.sock").is_err() {
+        if fs::metadata("/tmp/daemon_test.sock").is_err() {
             return Err(color_eyre::eyre::eyre!("Daemon failed to start in time"));
         }
     }
@@ -190,7 +182,7 @@ pub async fn handle_run_command(command: String) -> Result<()> {
 }
 
 pub async fn handle_list_sessions() -> Result<()> {
-    if fs::metadata("/tmp/penar.sock").is_err() {
+    if fs::metadata("/tmp/daemon_test.sock").is_err() {
         return Err(color_eyre::eyre::eyre!("Daemon not running."));
     }
 
@@ -221,7 +213,7 @@ pub async fn handle_list_sessions() -> Result<()> {
 }
 
 pub async fn handle_attach_session(name: String) -> Result<()> {
-    if fs::metadata("/tmp/penar.sock").is_err() {
+    if fs::metadata("/tmp/daemon_test.sock").is_err() {
         return Err(color_eyre::eyre::eyre!("Daemon not running."));
     }
 
@@ -261,7 +253,7 @@ pub async fn handle_attach_session(name: String) -> Result<()> {
 }
 
 pub async fn handle_kill_session(name: String) -> Result<()> {
-    if fs::metadata("/tmp/penar.sock").is_err() {
+    if fs::metadata("/tmp/daemon_test.sock").is_err() {
         return Err(color_eyre::eyre::eyre!("Daemon not running."));
     }
 
@@ -301,7 +293,7 @@ pub async fn handle_kill_session(name: String) -> Result<()> {
 }
 
 pub async fn handle_kill_all_sessions() -> Result<()> {
-    if fs::metadata("/tmp/penar.sock").is_err() {
+    if fs::metadata("/tmp/daemon_test.sock").is_err() {
         return Err(color_eyre::eyre::eyre!("Daemon not running."));
     }
 
@@ -332,7 +324,7 @@ pub async fn handle_kill_all_sessions() -> Result<()> {
 }
 
 pub async fn handle_kill_daemon() -> Result<()> {
-    if fs::metadata("/tmp/penar.sock").is_err() {
+    if fs::metadata("/tmp/daemon_test.sock").is_err() {
         println!("Daemon not running.");
         return Ok(());
     }
