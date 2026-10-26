@@ -1,13 +1,15 @@
+use bincode_next::{Decode, Encode};
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap},
+    path::{Path, PathBuf},
     vec,
 };
-use bincode_next::{Decode, Encode};
 
+use color_eyre::eyre::{Ok, OptionExt, Result, eyre};
 use mk_utils::AssignOps;
 
-use crate::backend::window_manager::WindowId;
+use crate::backend::{window_manager::WindowId, yaml::{self, models::YamlSession}};
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, AssignOps, Encode, Decode)]
 pub struct SessionId(pub u64);
@@ -27,80 +29,99 @@ impl SessionManager {
         }
     }
 
-    pub fn get_window_ids_by_session_id(&self, session_id: SessionId) -> Vec<WindowId> {
-        let session = self.sessions.get(&session_id).unwrap(); //TODO
-        session.windows.clone()
-    }
+    pub fn remove_window_from_session(
+        &mut self,
+        session_id: SessionId,
+        window_id: WindowId,
+    ) -> Result<()> {
+        let session = self
+            .get_session_by_id_mut(session_id)
+            .ok_or(eyre!("Session not found"))?;
+        let windows = session
+            .get_windows_mut()
+            .ok_or_eyre(eyre!("Session did not have windows"))?;
 
-    pub fn remove_window_from_session(&mut self, window_id: WindowId) {
-        let session_id = self.get_session_id_from_window(window_id).unwrap(); // TODO
-        self.sessions
-            .get_mut(&session_id)
-            .unwrap()
-            .windows
-            .retain(|&id| id != window_id)
+        windows.retain(|&id| id != window_id);
+        Ok(())
     }
 
     pub fn get_session_name_by_id(&self, _session_id: SessionId) -> String {
         "VERY_RANDOM_SESSION_NAME".to_string() // TODO add this when needed
     }
-    pub fn get_all_windows_from_session(&self, session_id: SessionId) -> Vec<WindowId> {
-        self.get_session_by_id(session_id).windows.clone()
-    }
 
-    pub fn is_session_empty(&self, session_id: SessionId) -> bool {
-        self.get_all_windows_from_session(session_id).is_empty()
+    pub fn get_all_windows_from_session(&self, session_id: SessionId) -> Option<&Vec<WindowId>> {
+        let session = self.get_session_by_id(session_id);
+
+        match session {
+            Some(session) => match &session.kind {
+                SessionKind::Ephemoral { windows } => Some(windows),
+                SessionKind::ConfigBased {
+                    yaml_path: _,
+                    manager: _,
+                    state,
+                } => match state {
+                    SessionState::Running { windows } => Some(windows),
+                    SessionState::Stopped => None,
+                },
+            },
+            None => todo!(),
+        }
     }
 
     pub fn does_session_exist(&self, session_id: SessionId) -> bool {
         self.sessions.contains_key(&session_id)
     }
 
-    pub fn create_session(&mut self, window_id: WindowId, session_name: String) -> SessionId {
+    pub fn create_ephem_session(&mut self, window_id: WindowId, session_name: String) -> SessionId {
         let id = self.generate_id();
-        self.sessions.insert(
+        let session = Session {
             id,
-            Session {
-                session_id: id,
-                session_name,
+            name: session_name,
+            kind: SessionKind::Ephemoral {
                 windows: vec![window_id],
             },
-        );
+        };
+        self.sessions.insert(id, session);
         id
     }
 
-    pub fn create_empty_session(&mut self, session_name: String) -> SessionId {
+    pub fn create_running_config_session(&mut self, session_name: String, windows: Vec<WindowId>) {
         let id = self.generate_id();
-        self.sessions.insert(
+        let session = Session {
             id,
-            Session {
-                session_id: id,
-                session_name,
-
-                windows: vec![],
-            },
-        );
-        id
-    }
-    pub fn get_session_id_from_window(&self, window_id: WindowId) -> Option<SessionId> {
-        for (id, session) in &self.sessions {
-            if session.windows.contains(&window_id) {
-                return Some(*id);
-            }
-        }
-        return None;
-    }
-    pub fn add_window_to_session(&mut self, session_id: SessionId, window_id: WindowId) {
-        let session = self.get_session_by_id_mut(session_id);
-        session.windows.push(window_id);
+            name: session_name,
+            kind: SessionKind::ConfigBased {
+                 yaml_path: "TODO".into(), 
+                 manager: Manager::Daemon, 
+                 state: SessionState::Running { windows: windows } 
+                }
+        };
+        self.sessions.insert(id, session);
     }
 
-    pub fn get_session_by_id(&self, session_id: SessionId) -> &Session {
-        self.sessions.get(&session_id).unwrap()
+    // TODO pub fn append_to_session maybe in IPC API
+    pub fn add_window_to_session(
+        &mut self,
+        session_id: SessionId,
+        window_id: WindowId,
+    ) -> Result<()> {
+        let session = self
+            .get_session_by_id_mut(session_id)
+            .ok_or(eyre!("Session not found"))?;
+        let windows = session
+            .get_windows_mut()
+            .ok_or_eyre(eyre!("Session did not have windows"))?;
+
+        windows.push(window_id);
+        Ok(())
     }
 
-    fn get_session_by_id_mut(&mut self, session_id: SessionId) -> &mut Session {
-        self.sessions.get_mut(&session_id).unwrap()
+    pub fn get_session_by_id(&self, session_id: SessionId) -> Option<&Session> {
+        self.sessions.get(&session_id)
+    }
+
+    fn get_session_by_id_mut(&mut self, session_id: SessionId) -> Option<&mut Session> {
+        self.sessions.get_mut(&session_id)
     }
     pub fn list_sessions(&self) -> Vec<&Session> {
         self.sessions.values().collect()
@@ -108,7 +129,7 @@ impl SessionManager {
 
     pub fn kill_session(&mut self, session_id: SessionId) {
         self.free_ids.push(Reverse(session_id));
-        self.sessions.remove(&session_id).unwrap();
+        self.sessions.remove(&session_id);
     }
 
     fn generate_id(&mut self) -> SessionId {
@@ -122,7 +143,66 @@ impl SessionManager {
 }
 
 pub struct Session {
-    pub session_id: SessionId,
-    pub session_name: String,
-    pub windows: Vec<WindowId>, 
+    pub id: SessionId,
+    pub name: String,
+    pub kind: SessionKind,
+}
+
+impl Session {
+    pub fn get_windows(&self) -> Option<&Vec<WindowId>> {
+        match &self.kind {
+            SessionKind::Ephemoral { windows } => Some(windows),
+            SessionKind::ConfigBased {
+                yaml_path: _,
+                manager: _,
+                state,
+            } => match state {
+                SessionState::Running { windows } => Some(windows),
+                SessionState::Stopped => None,
+            },
+        }
+    }
+
+    pub fn get_windows_mut(&mut self) -> Option<&mut Vec<WindowId>> {
+        match &mut self.kind {
+            SessionKind::Ephemoral { windows } => Some(windows),
+            SessionKind::ConfigBased {
+                yaml_path: _,
+                manager: _,
+                state,
+            } => match state {
+                SessionState::Running { windows } => Some(windows),
+                SessionState::Stopped => None,
+            },
+        }
+    }
+}
+pub enum SessionKind {
+    Ephemoral {
+        windows: Vec<WindowId>,
+    },
+    ConfigBased {
+        yaml_path: PathBuf,
+        manager: Manager,
+        state: SessionState,
+    },
+}
+
+pub enum SessionState {
+    Running { windows: Vec<WindowId> },
+    Stopped, // TODO Handle possible exit codes later
+}
+pub enum Manager {
+    Daemon,
+    Systemd { unit: UnitName, enabled: bool },
+}
+
+// Unit name struct that has to be a valid unit name
+pub struct UnitName(String);
+
+impl UnitName {
+    pub fn new(name: &str) -> Result<Self> {
+        // TODO add actual verification here.
+        Ok(UnitName(name.to_string()))
+    }
 }

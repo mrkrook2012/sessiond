@@ -470,8 +470,10 @@ pub fn run_frontend() -> Result<()> {
                             // last window, killing it closes the session
                             // entirely (we'll get a ListedSessions back),
                             // so there's nothing to change focus to.
+                            // KillWindow now also carries the session_id.
                             KeyCode::Char('x') => {
                                 if let Some(session) = st.current_session.as_ref() {
+                                    let session_id = session.session_id;
                                     let len = session.windows_info.len();
                                     let window_id =
                                         session.windows_info[st.current_window_index].window_id;
@@ -497,7 +499,10 @@ pub fn run_frontend() -> Result<()> {
 
                                     drop(st);
                                     sender
-                                        .send(&ClientMessage::KillWindow { window_id })
+                                        .send(&ClientMessage::KillWindow {
+                                            session_id,
+                                            window_id,
+                                        })
                                         .unwrap();
                                     if let Some((_, next_window_id)) = next {
                                         sender

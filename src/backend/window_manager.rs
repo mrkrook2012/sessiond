@@ -50,19 +50,19 @@ impl WindowManager {
         None
     }
 
-    pub fn get_terminal_id_from_window_id(&self, window_id: WindowId) -> TerminalId {
+    pub fn get_terminal_id_from_window_id(&self, window_id: &WindowId) -> TerminalId {
         self.windows.get(&window_id).unwrap().terminal_id
     }
 
-    pub fn get_window_info_by_id(&self, window_id: WindowId) -> WindowInfo {
+    pub fn get_window_info_by_id(&self, window_id: &WindowId) -> WindowInfo {
         let window = self.get_window_by_id(window_id);
         window.get_window_info()
     }
 
-    pub fn get_window_by_id(&self, window_id: WindowId) -> &Window {
+    pub fn get_window_by_id(&self, window_id: &WindowId) -> &Window {
         self.windows.get(&window_id).unwrap()
     }
-    pub fn get_window_by_id_mut(&mut self, window_id: WindowId) -> &mut Window {
+    pub fn get_window_by_id_mut(&mut self, window_id: &WindowId) -> &mut Window {
         self.windows.get_mut(&window_id).unwrap()
     }
 

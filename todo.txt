@@ -1,5 +1,8 @@
 todo:
-  - Fix tests
+  - Fix tests V
+  - Add file only export 
+  - Add tests for file stuff
+  - Add systemd integration
   - Add unit tests
   - publish mk_utils to crates.io
   - make CI/CD pipeline

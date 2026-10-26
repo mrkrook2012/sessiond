@@ -24,6 +24,7 @@ pub enum ClientMessage {
         session_id: SessionId,
     },
     KillWindow {
+        session_id: SessionId,
         window_id: WindowId,
     },
     ChangeWindow {
@@ -63,6 +64,7 @@ pub enum ClientMessage {
 
     // Should not be used, kill the window instead.
     KillTerminal {
+        session_id: SessionId,
         terminal_id: TerminalId,
     },
 
