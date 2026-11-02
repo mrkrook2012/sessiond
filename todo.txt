@@ -18,3 +18,11 @@ todo:
   - Clean up build warnings
   - Look into supporting fish or zsh
 
+Sysd:
+ start-Sysd
+ stop-Sysd
+These command will be triggered when cargo run -- stop session_name is run
+the sysd varient must only be used in the sysd file.
+this way, using the sysd systmctl to restart will also work. 
+the stop and start sysd versions will not create new session, they will toggle 
+the initializion of the session will be plugged into the load feature of sysd. 

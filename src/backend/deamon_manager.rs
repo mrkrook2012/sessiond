@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 
-use crate::backend::session_manager::{SessionId, UnitName};
+use crate::backend::session_manager::{SessionId, SessionKind, UnitName};
 use crate::backend::systemd_service_manager::SystemdServiceManager;
 use crate::backend::terminal_manager::TerminalId;
 use crate::backend::window_manager::WindowId;
@@ -12,7 +12,7 @@ use crate::backend::{
     mini_user_manager::MiniUserManager, session_manager::SessionManager,
     terminal_manager::TerminalManager, window_manager::WindowManager,
 };
-use crate::ipc::protocol::{ClientMessage, ServerMessage, SessionInfo};
+use crate::ipc::protocol::{ClientMessage, ServerMessage, SessionInfo, SysdAction, SysdData};
 use color_eyre::eyre::{Ok, OptionExt, Result, eyre};
 use tokio::sync::Mutex;
 
@@ -99,9 +99,39 @@ impl DaemonManager {
             }
         }
     }
+    fn handle_execute_sysd_action(&mut self, id: SessionId, sysd_action: SysdAction) -> Result<ServerMessage> {
+        //
+
+        Ok(ServerMessage::Ok)
+    }
 
     fn handle_start_sysd_session_from_file(&mut self, file_path: PathBuf) -> Result<ServerMessage> {
-        todo!()
+        println!("Got file");
+        let input = std::fs::read_to_string(file_path)?;
+        let session_yaml: YamlSession = serde_yaml::from_str(&input)?;
+        let name = UnitName::new(&session_yaml.name)?;
+        println!("Parsed yaml {:?}", session_yaml);
+
+        let mut windows: Vec<WindowId> = vec![];
+        for window in session_yaml.windows {
+            println!("Adding window with command {}", window.command);
+
+            let terminal_id = self.terminal_manager.create_terminal(100, 100); // Should be usermanager ones
+
+            let working_dir = window.working_directory;
+            self.terminal_manager
+                .execute_command_on_terminal(terminal_id, format!("cd {working_dir}"));
+
+            self.terminal_manager
+                .execute_command_on_terminal(terminal_id, window.command);
+
+            let window_id = self.window_manager.create_window(terminal_id);
+            windows.push(window_id);
+        }
+
+        self.session_manager
+            .create_sysd_session( name, windows);
+        Ok(ServerMessage::Ok)
     }
 
     fn handle_export_session_to_file(
@@ -409,6 +439,10 @@ impl DaemonManager {
                                 .get_window_info()
                         })
                         .collect(),
+                    match &session.kind {
+                        SessionKind::Ephemoral { windows } => None,
+                        SessionKind::SysdBased(sysd_session) => Some(sysd_session.get_sysd_data()),
+                    },
                 )
             })
             .collect()
@@ -429,6 +463,10 @@ impl DaemonManager {
                         .get_window_info()
                 })
                 .collect(),
+            match &session.kind {
+                SessionKind::Ephemoral { windows } => None,
+                SessionKind::SysdBased(sysd_session) => Some(sysd_session.get_sysd_data()),
+            },
         )
     }
 

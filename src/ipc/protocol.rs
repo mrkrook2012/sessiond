@@ -2,7 +2,7 @@ use bincode_next::{Decode, Encode};
 use std::path::PathBuf;
 
 use crate::backend::{
-    session_manager::SessionId, terminal_manager::TerminalId, window_manager::WindowId,
+    session_manager::{SessionId, SessionState}, terminal_manager::TerminalId, window_manager::WindowId,
 };
 
 #[derive(Decode, Encode, Debug)]
@@ -135,6 +135,13 @@ pub struct SessionInfo {
     pub id: SessionId,
     pub name: String,
     pub windows_info: Vec<WindowInfo>,
+    pub sysd_data: Option<SysdData>,// maybe improve later
+}
+
+#[derive(Decode, Encode, Debug, Clone)]
+pub struct SysdData {
+    pub enabled: bool,
+    pub running: bool,
 }
 
 #[derive(Decode, Encode, Debug, Clone)]
@@ -153,11 +160,12 @@ impl WindowInfo {
 }
 
 impl SessionInfo {
-    pub fn new(id: SessionId, name: String, windows_info: Vec<WindowInfo>) -> Self {
+    pub fn new(id: SessionId, name: String, windows_info: Vec<WindowInfo>, sysd_data: Option<SysdData>) -> Self {
         Self {
             id,
             name,
             windows_info,
+            sysd_data
         }
     }
 }

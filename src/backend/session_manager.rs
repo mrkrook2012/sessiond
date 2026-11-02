@@ -3,15 +3,19 @@ use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap},
     path::{Path, PathBuf},
+    process::Command,
     vec,
 };
 
 use color_eyre::eyre::{Ok, OptionExt, Result, eyre};
 use mk_utils::AssignOps;
 
-use crate::backend::{
-    window_manager::WindowId,
-    yaml::{self, models::YamlSession},
+use crate::{
+    backend::{
+        window_manager::WindowId,
+        yaml::{self, models::YamlSession},
+    },
+    ipc::protocol::SysdData,
 };
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, AssignOps, Encode, Decode)]
@@ -32,11 +36,7 @@ impl SessionManager {
         }
     }
 
-    pub fn remove_window_from_session(
-        &mut self,
-        id: SessionId,
-        window_id: WindowId,
-    ) -> Result<()> {
+    pub fn remove_window_from_session(&mut self, id: SessionId, window_id: WindowId) -> Result<()> {
         let session = self
             .get_session_by_id_mut(id)
             .ok_or(eyre!("Session not found"))?;
@@ -69,9 +69,7 @@ impl SessionManager {
         let session = Session {
             id,
             name: name,
-            kind: SessionKind::Ephemoral {
-                windows: window_id,
-            },
+            kind: SessionKind::Ephemoral { windows: window_id },
         };
         self.sessions.insert(id, session);
         id
@@ -82,23 +80,18 @@ impl SessionManager {
         let session = Session {
             id,
             name: name.to_string(),
-            kind: SessionKind::SysdBased( SysdSession {
-                 name, 
-                 state: SessionState::Running { windows }, 
-                 enabled: false 
-                })
-
+            kind: SessionKind::SysdBased(SysdSession {
+                name,
+                state: SessionState::Running { windows },
+                enabled: false,
+            }),
         };
         self.sessions.insert(id, session);
         id
     }
 
     // TODO pub fn append_to_session maybe in IPC API
-    pub fn add_window_to_session(
-        &mut self,
-        id: SessionId,
-        window_id: WindowId,
-    ) -> Result<()> {
+    pub fn add_window_to_session(&mut self, id: SessionId, window_id: WindowId) -> Result<()> {
         let session = self
             .get_session_by_id_mut(id)
             .ok_or(eyre!("Session not found"))?;
@@ -174,16 +167,47 @@ pub struct SysdSession {
 }
 
 impl SysdSession {
+    // TODO improve this by using the actual commands
     pub fn start(&mut self) {
-        // ...
+        Command::new("systemctl")
+            .arg("--user")
+            .arg("start")
+            .arg(format!("{}", self.name.to_string()))
+            .output()
+            .unwrap();
     }
 
     pub fn stop(&mut self) {
-        // ...
+        Command::new("systemctl")
+            .arg("--user")
+            .arg("start")
+            .arg(format!("{}", self.name.to_string()))
+            .output()
+            .unwrap();
     }
 
     pub fn enable(&mut self) {
-        // ...
+        Command::new("systemctl")
+            .arg("--user")
+            .arg("enable")
+            .arg(format!("{}", self.name.to_string()))
+            .output()
+            .unwrap();
+    }
+
+    pub fn disable(&mut self) {
+        Command::new("systemctl")
+            .arg("--user")
+            .arg("disable")
+            .arg(format!("{}", self.name.to_string()))
+            .output()
+            .unwrap();
+    }
+    pub fn get_sysd_data(&self) -> SysdData {
+        SysdData {
+            enabled: self.enabled,
+            running: matches!(self.state, SessionState::Running { windows: _ }),
+        }
     }
 }
 

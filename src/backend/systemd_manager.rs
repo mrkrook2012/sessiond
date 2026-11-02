@@ -2,7 +2,7 @@ use color_eyre::eyre::Result;
 use std::fmt::format;
 use std::path::Path;
 use std::path::PathBuf;
-use tokio::fs;
+use std::fs;
 
 use crate::backend::session_manager::UnitName;
 
@@ -23,11 +23,11 @@ impl SystemdManager {
             .unwrap()
             .to_owned();
         let start_command = format!("{bin_path} start-sysd {:?}",path_to_config_file.as_path());
-        let stop_command = format!("{bin_path} kill {:?}", name.to_string());
+        let stop_command = format!("{bin_path} stop-sysd {:?}", name.to_string());
 
         let file_contents =
             Self::get_filled_template(&user, sysd_directory, start_command, stop_command, RestartPolicy::No);
-        fs::write(service_file_path_buffer, file_contents);
+        fs::write(service_file_path_buffer, file_contents).unwrap();
 
         Ok(())
     }
