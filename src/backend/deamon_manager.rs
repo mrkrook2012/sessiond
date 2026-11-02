@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
@@ -12,8 +13,8 @@ use crate::backend::{
     terminal_manager::TerminalManager, window_manager::WindowManager,
 };
 use crate::ipc::protocol::{ClientMessage, ServerMessage, SessionInfo};
-use color_eyre::eyre::{OptionExt, Result, eyre};
-use tokio::sync::Mutex;
+use color_eyre::eyre::{Ok, OptionExt, Result, eyre};
+use tokio::sync::{Mutex, Notify};
 
 pub struct DaemonManager {
     user_manager: MiniUserManager,
@@ -84,22 +85,33 @@ impl DaemonManager {
             ClientMessage::OpenSession { id } => self.handle_open_session(id),
             ClientMessage::ChangeWindow { window_id } => Ok(self.handle_change_window(window_id)),
             ClientMessage::KillWindow { window_id, id } => self.handle_kill_window(id, window_id),
-            ClientMessage::ExportSession { id } => self.handle_export_session(id),
+            ClientMessage::ExportSessionToSysd { id } => self.handle_export_session(id),
             ClientMessage::StartSessionFromFile { file_path } => {
                 self.handle_start_session_from_file(file_path)
             }
-            ClientMessage::KillDaemon => {
-                // TODO this is bad
-                // This should cause the daemon to exit
-                // Return a special response that the frontend can interpret
-                let _suicide = Command::new("killall").arg("deamon_test").output().unwrap();
-                panic!("Got kill message, exiting");
-            }
+                ClientMessage::KillDaemon => {self.handle_kill_deamon(); Ok(ServerMessage::Ok)},
             ClientMessage::UpdateSysdSessionEnabled { id, enabled } => todo!(),
             ClientMessage::SetRunningSysdSession { id, should_run } => todo!(),
+            ClientMessage::ExportSessionToFile { id, working_dir } => {
+                self.handle_export_session_to_file(id, working_dir)
+            }
         }
     }
 
+    fn handle_export_session_to_file(
+        &self,
+        id: SessionId,
+        mut path: PathBuf,
+    ) -> Result<ServerMessage> {
+        let session = self.get_session_info_by_id(id);
+        let name = session.name;
+        let yaml = self.get_session_yaml(id)?;
+        println!("path: {:?}, name {}", path, name);
+        path.push(name);
+        path.add_extension(".yaml");
+        fs::write(path.as_path(), yaml)?;
+        Ok(ServerMessage::ExportedSessionToFile { path })
+    }
     // TODO think about working directories and storing files
     fn handle_start_session_from_file(
         &mut self,
@@ -412,5 +424,9 @@ impl DaemonManager {
         ServerMessage::ListedSessions {
             sessions: self.get_all_session_info(),
         }
+    }
+
+    fn handle_kill_deamon(&self) -> ! {
+        std::process::exit(0);
     }
 }

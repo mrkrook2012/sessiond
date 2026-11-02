@@ -30,12 +30,11 @@ async fn main() -> Result<()> {
             }
             return Ok(());
         }
-        Some(cli::Commands::Run { command }) => {
-            cli::handle_run_command(command).await?;
+        Some(cli::Commands::Run { command, name }) => {
+            cli::handle_run_command(command, name).await?;
         }
-        Some(cli::Commands::List) => {
-            cli::handle_list_sessions().await?;
-        }
+        Some(cli::Commands::List { names }) => cli::handle_list_sessions(names).await?,
+        Some(cli::Commands::Status) => cli::handle_status(),
         Some(cli::Commands::Attach { name }) => {
             cli::handle_attach_session(name).await?;
         }
@@ -48,6 +47,8 @@ async fn main() -> Result<()> {
         Some(cli::Commands::KillDaemon) => {
             cli::handle_kill_daemon().await?;
         }
+        Some(cli::Commands::Export { name, dir }) => cli::handle_export_session(name, dir).await?,
+        Some(cli::Commands::ExportSysd { name }) => cli::handle_export_sysd(name).await?,
         None => {
             // Original behavior: start daemon if not running, then run frontend
             if fs::metadata("/tmp/daemon_test.sock").is_err() {

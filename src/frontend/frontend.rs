@@ -160,6 +160,11 @@ fn terminal_pane_size(area: Rect) -> (u16, u16) {
 }
 
 pub fn run_frontend() -> Result<()> {
+    // The directory the frontend was launched from. Used as the target
+    // directory for "export session to file". Captured up front, before
+    // we touch the terminal, so a failure here can't leave it in raw mode.
+    let start_dir = std::env::current_dir()?;
+
     let backend = CrosstermBackend::new(std::io::stdout());
     let mut terminal = Terminal::new(backend)?;
     let mut log = OpenOptions::new()
@@ -230,6 +235,12 @@ pub fn run_frontend() -> Result<()> {
                 ServerMessage::Pong => {}
                 ServerMessage::Started => {}
 
+                // Reply to ExportSessionToFile: the server tells us where
+                // it wrote the export.
+                ServerMessage::ExportedSessionToFile { path } => {
+                    st.status = format!("Exported to {}", path.display());
+                }
+
                 // Covers session creation, session open, and every
                 // structural change within a session (window create/kill)
                 // - the server just hands back the authoritative
@@ -297,7 +308,12 @@ pub fn run_frontend() -> Result<()> {
                         st.update_screen(update.terminal_id, update.data.as_slice());
                     }
                 }
-                ServerMessage::Error { error } => eprint!("Got error back {}", error),
+                // Show errors in the status line rather than eprint!, which
+                // would scribble over the TUI.
+                ServerMessage::Error { error } => {
+                    log_line(&mut log, format!("server error: {error}"));
+                    st.status = format!("Error: {error}");
+                }
             }
         }
     });
@@ -410,9 +426,7 @@ pub fn run_frontend() -> Result<()> {
                                 if let Some(session) = st.current_session.as_ref() {
                                     let id = session.id;
                                     drop(st);
-                                    sender
-                                        .send(&ClientMessage::CreateWindow { id })
-                                        .unwrap();
+                                    sender.send(&ClientMessage::CreateWindow { id }).unwrap();
                                 }
                             }
                             // n: next window
@@ -499,10 +513,7 @@ pub fn run_frontend() -> Result<()> {
 
                                     drop(st);
                                     sender
-                                        .send(&ClientMessage::KillWindow {
-                                            id,
-                                            window_id,
-                                        })
+                                        .send(&ClientMessage::KillWindow { id, window_id })
                                         .unwrap();
                                     if let Some((_, next_window_id)) = next {
                                         sender
@@ -558,9 +569,7 @@ pub fn run_frontend() -> Result<()> {
                                 if let Some(session) = st.selected_session() {
                                     let id = session.id;
                                     drop(st);
-                                    sender
-                                        .send(&ClientMessage::OpenSession { id })
-                                        .unwrap();
+                                    sender.send(&ClientMessage::OpenSession { id }).unwrap();
                                     continue;
                                 }
                             }
@@ -568,24 +577,41 @@ pub fn run_frontend() -> Result<()> {
                                 if let Some(session) = st.selected_session() {
                                     let id = session.id;
                                     drop(st);
-                                    sender
-                                        .send(&ClientMessage::KillSession { id })
-                                        .unwrap();
+                                    sender.send(&ClientMessage::KillSession { id }).unwrap();
                                     sender.send(&ClientMessage::ListSessions).unwrap();
                                     continue;
                                 }
                             }
-                            // e: export the selected session. The server
-                            // is expected to reply with a plain Ok once
-                            // the export is written; see the ServerMessage::Ok
-                            // arm above for the status update.
+                            // e: export the selected session to a systemd
+                            // unit. The server replies with a plain Ok; see
+                            // the ServerMessage::Ok arm above for the
+                            // status update.
                             KeyCode::Char('e') => {
                                 if let Some(session) = st.selected_session() {
                                     let id = session.id;
-                                    st.status = "Exporting session...".to_owned();
+                                    st.status = "Exporting session to systemd...".to_owned();
                                     drop(st);
                                     sender
-                                        .send(&ClientMessage::ExportSession { id })
+                                        .send(&ClientMessage::ExportSessionToSysd { id })
+                                        .unwrap();
+                                    continue;
+                                }
+                            }
+                            // f: export the selected session to a file in
+                            // the directory the frontend was started in.
+                            // The server replies with
+                            // ExportedSessionToFile { path }; see the
+                            // receiver thread for the status update.
+                            KeyCode::Char('f') => {
+                                if let Some(session) = st.selected_session() {
+                                    let id = session.id;
+                                    st.status = "Exporting session to file...".to_owned();
+                                    drop(st);
+                                    sender
+                                        .send(&ClientMessage::ExportSessionToFile {
+                                            id,
+                                            working_dir: start_dir.clone(),
+                                        })
                                         .unwrap();
                                     continue;
                                 }
@@ -818,7 +844,14 @@ pub fn run_frontend() -> Result<()> {
 fn draw_session_list(frame: &mut ratatui::Frame, area: Rect, st: &AppState) {
     let chunks = screen_layout(area);
 
-    let title = Paragraph::new("Sessions").block(Block::default().borders(Borders::ALL));
+    // The status is shown in the title bar so export results (and errors)
+    // are actually visible.
+    let title_text = if st.status.is_empty() {
+        "Sessions".to_owned()
+    } else {
+        format!("Sessions  -  {}", st.status)
+    };
+    let title = Paragraph::new(title_text).block(Block::default().borders(Borders::ALL));
     frame.render_widget(title, chunks[0]);
 
     if let InputMode::NewSessionName(text) = &st.input_mode {
@@ -860,7 +893,9 @@ fn draw_session_list(frame: &mut ratatui::Frame, area: Rect, st: &AppState) {
         Span::styled(" x/d ", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw("kill  "),
         Span::styled(" e ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw("export  "),
+        Span::raw("export sysd  "),
+        Span::styled(" f ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw("export file  "),
         Span::styled(" r ", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw("refresh  "),
         Span::styled(" q ", Style::default().add_modifier(Modifier::BOLD)),

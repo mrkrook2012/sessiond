@@ -485,6 +485,7 @@ dependencies = [
  "ratatui",
  "serde",
  "serde_yaml",
+ "tempfile",
  "tokio",
  "vt100",
  "zbus_systemd",

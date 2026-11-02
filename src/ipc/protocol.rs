@@ -46,8 +46,13 @@ pub enum ClientMessage {
         id: SessionId,
     },
 
-    ExportSession {
+    ExportSessionToSysd {
         id: SessionId,
+    },
+
+    ExportSessionToFile {
+        id: SessionId,
+        working_dir: PathBuf,
     },
 
     UpdateSysdSessionEnabled {
@@ -85,6 +90,8 @@ pub enum ClientMessage {
 
     /// Kill the daemon process
     KillDaemon,
+
+    // Useful for cli 
 }
 
 #[derive(Decode, Encode, Debug)]
@@ -98,6 +105,7 @@ pub enum ServerMessage {
     // This will be returned from a list sessions, and later change names, stop restart ect
     // but also if you kill the last terminal, window or just kill a session
     ListedSessions { sessions: Vec<SessionInfo> },
+    ExportedSessionToFile{path: PathBuf},
     TerminalData { terminals: Vec<TerminalUpdate> },
 }
 

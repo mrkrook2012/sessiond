@@ -18,7 +18,7 @@ use crate::backend::session_manager::SessionManager;
 use crate::backend::systemd_service_manager::SystemdServiceManager;
 use crate::backend::terminal_manager::TerminalManager;
 use crate::backend::window_manager::WindowManager;
-use crate::ipc::consts::{SOCKET_PATH, socket_name};
+use crate::ipc::consts::{socket_path, socket_name};
 use crate::ipc::ipc_connection::IpcConnection;
 use crate::ipc::protocol::{ClientMessage, ServerMessage};
 
@@ -26,10 +26,10 @@ pub async fn run_daemon() -> Result<()> {
     // Check if socket exists
     // if so check if not stale
 
-    if Path::new(SOCKET_PATH).exists() {
+    if Path::new(&socket_path()).exists() {
         // There is a file
         let listener = ListenerOptions::new()
-            .name(SOCKET_PATH.to_fs_name::<GenericFilePath>().unwrap())
+            .name(socket_path().to_fs_name::<GenericFilePath>().unwrap())
             .create_sync();
         match listener {
             Ok(_listener) => {
