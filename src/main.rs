@@ -37,6 +37,9 @@ async fn main() -> Result<()> {
         Some(cli::Commands::Attach { name }) => {
             cli::handle_attach_session(name).await?;
         }
+        Some(cli::Commands::StartSysd { file_path }) => {
+            cli::handle_start_sysd(file_path).await?;
+        }
         Some(cli::Commands::Kill { name }) => {
             cli::handle_kill_session(name).await?;
         }

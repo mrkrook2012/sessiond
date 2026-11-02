@@ -1,7 +1,9 @@
 use bincode_next::{Decode, Encode};
 use std::path::PathBuf;
 
-use crate::backend::{session_manager::SessionId, terminal_manager::TerminalId, window_manager::WindowId};
+use crate::backend::{
+    session_manager::SessionId, terminal_manager::TerminalId, window_manager::WindowId,
+};
 
 #[derive(Decode, Encode, Debug)]
 pub enum ClientMessage {
@@ -55,17 +57,16 @@ pub enum ClientMessage {
         working_dir: PathBuf,
     },
 
-    UpdateSysdSessionEnabled {
+    ExecuteSysdActionSession {
         id: SessionId,
-        enabled: bool, 
-    },
-
-    SetRunningSysdSession {
-        id: SessionId,
-        should_run: bool,
+        sysd_action: SysdAction,
     },
 
     StartSessionFromFile {
+        file_path: PathBuf,
+    },
+
+    StartSysdSessionFromFile {
         file_path: PathBuf,
     },
 
@@ -90,8 +91,16 @@ pub enum ClientMessage {
 
     /// Kill the daemon process
     KillDaemon,
+    // Useful for cli
+}
 
-    // Useful for cli 
+#[derive(Decode, Encode, Debug)]
+pub enum SysdAction {
+    Start,
+    Stop,
+    Restart,
+    Enable,
+    Disable,
 }
 
 #[derive(Decode, Encode, Debug)]
@@ -105,7 +114,7 @@ pub enum ServerMessage {
     // This will be returned from a list sessions, and later change names, stop restart ect
     // but also if you kill the last terminal, window or just kill a session
     ListedSessions { sessions: Vec<SessionInfo> },
-    ExportedSessionToFile{path: PathBuf},
+    ExportedSessionToFile { path: PathBuf },
     TerminalData { terminals: Vec<TerminalUpdate> },
 }
 

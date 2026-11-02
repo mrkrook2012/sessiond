@@ -3,7 +3,8 @@ todo:
   - Add file only export V
   - Add tests for file stuff V
   - Add systemd integration
-  - make CI/CD pipeline
+  - Add daemon based duplicate name rejection
+  - make CI/CD pipeline V
   - Finalize systemd integration
   - Clean up Async work
   - Multi user 

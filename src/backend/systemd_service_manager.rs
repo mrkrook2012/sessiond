@@ -13,7 +13,7 @@ use zbus_systemd::{
 };
 
 pub struct SystemdServiceManager {
-    sessions: HashMap<UnitName, Session>, // Only the systd variant in kind
+    sessions: HashMap<UnitName, Session>, // Only the sysd variant in kind
     connection: Connection,
 }
 
@@ -36,38 +36,38 @@ impl SystemdServiceManager {
         yaml_path: &Path,
         name: UnitName,
     ) -> Result<()> {
+        todo!();
         // TODO checking name
         // Create the systemd file
         // Reload systemd daemon
         // Should start watcher that updates info
-        let bin_path = std::env::current_exe()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_owned();
-        let name_string: String = name.to_string();
-        let yaml_path = yaml_path.to_str().unwrap();
-        let start_command = format!("{bin_path} run {yaml_path}");
-        let working_dir = PathBuf::from(std::env::var("HOME")?);
-        let working_dir_string = working_dir.to_str().unwrap();
-        let systemd_file_path =
-            format!("{working_dir_string}/.config/systemd/user/{name_string}.service");
+        // let bin_path = std::env::current_exe()
+        //     .unwrap()
+        //     .to_str()
+        //     .unwrap()
+        //     .to_owned();
+        // let name_string: String = name.to_string();
+        // let yaml_path = yaml_path.to_str().unwrap();
+        // let working_dir = PathBuf::from(std::env::var("HOME")?);
+        // let working_dir_string = working_dir.to_str().unwrap();
+        // let systemd_file_path =
+        //     format!("{working_dir_string}/.config/systemd/user/{name_string}.service");
 
-        let user = std::env::var("USER")?;
+        // let user = std::env::var("USER")?;
 
-        SystemdManager::write_default_template_to_path(
-            systemd_file_path.into(),
-            user,
-            &working_dir,
-            start_command,
-        )
-        .await?;
+        // SystemdManager::write_default_template_to_path(
+        //     systemd_file_path.into(),
+        //     user,
+        //     &working_dir,
+        //     start_command,
+        // )
+        // .await?;
 
-        let manager = ManagerProxy::new(&self.connection).await?;
-        manager.reload().await?;
+        // let manager = ManagerProxy::new(&self.connection).await?;
+        // manager.reload().await?;
 
-        // TODO start watchdog to pipe updates
-        self.run_watchdog(name);
+        // // TODO start watchdog to pipe updates
+        // self.run_watchdog(name);
         Ok(())
     }
 

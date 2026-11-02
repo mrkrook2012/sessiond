@@ -1,28 +1,43 @@
 use color_eyre::eyre::Result;
+use std::fmt::format;
 use std::path::Path;
 use std::path::PathBuf;
 use tokio::fs;
 
+use crate::backend::session_manager::UnitName;
+
 pub struct SystemdManager {}
 
 impl SystemdManager {
-    pub async fn write_default_template_to_path(
-        path: PathBuf,
+    pub fn write_default_template_to_path(
+        path_to_config_file: PathBuf,
         user: String,
-        working_dir: &Path,
-        start_command: String,
+        sysd_directory: &Path,
+        name: UnitName,
     ) -> Result<()> {
+        let mut service_file_path_buffer = sysd_directory.to_path_buf();
+        service_file_path_buffer.push(name.to_string());
+        let bin_path = std::env::current_exe()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let start_command = format!("{bin_path} start-sysd {:?}",path_to_config_file.as_path());
+        let stop_command = format!("{bin_path} kill {:?}", name.to_string());
+
         let file_contents =
-            Self::get_filled_template(&user, working_dir, start_command, RestartPolicy::No);
-        fs::write(path, file_contents).await?;
+            Self::get_filled_template(&user, sysd_directory, start_command, stop_command, RestartPolicy::No);
+        fs::write(service_file_path_buffer, file_contents);
 
         Ok(())
     }
 
     fn get_filled_template(
         user: &str,
-        working_dir: &Path,
+        directory: &Path,
         start_command: String,
+        stop_command: String,
+
         restart: RestartPolicy,
     ) -> String {
         "[Unit]
@@ -34,7 +49,8 @@ impl SystemdManager {
         User={user}
         WorkingDirectory={work_dir}
 
-        ExecStart={start_command}
+        ExecStart={start_command} 
+        ExecStop={stop_commannd}
 
         Restart={restart_policy}
         RestartSec=10
@@ -46,7 +62,8 @@ impl SystemdManager {
         .to_owned()
         .replace("{user}", &user)
         .replace("{start_command}", &start_command)
-        .replace("{work_dir}", working_dir.to_str().unwrap())
+        .replace("{stop_command}", &stop_command)
+        .replace("{work_dir}", directory.to_str().unwrap())
         .replace("{restart_policy}", restart.as_str())
     }
 

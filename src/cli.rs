@@ -73,6 +73,11 @@ pub enum Commands {
         /// The name of the session to export
         name: String,
     },
+    /// Starts a session from a config file on behalf of systemd
+    StartSysd {
+        /// Path to the session config file (yaml)
+        file_path: PathBuf,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -263,6 +268,57 @@ pub async fn handle_run_command(command: String, name: Option<String>) -> Result
 
     println!("Session created successfully: {}", session_info.name);
     Ok(())
+}
+
+/// `start-sysd <file_path>`: asks the daemon to start a session from a config
+/// file as a systemd-managed session. Starts the daemon first if needed.
+pub async fn handle_start_sysd(file_path: PathBuf) -> Result<()> {
+    // Validate and make absolute: the daemon has its own working directory.
+    let absolute_path = fs::canonicalize(&file_path).map_err(|e| {
+        eyre!(
+            "Failed to get absolute path for config file {}: {}",
+            file_path.display(),
+            e
+        )
+    })?;
+    if !absolute_path.is_file() {
+        return Err(eyre!(
+            "Config path is not a file: {}",
+            absolute_path.display()
+        ));
+    }
+
+    ensure_daemon_running()?;
+    let (mut sender, mut receiver) = open_connection()?;
+
+    eprintln!(
+        "Starting systemd session from config file: {}",
+        absolute_path.display()
+    );
+
+    sender.send(&ClientMessage::StartSysdSessionFromFile {
+        file_path: absolute_path,
+    })?;
+
+    match receiver.recv::<ServerMessage>()? {
+        ServerMessage::Ok
+        | ServerMessage::UpdatedSession { .. }
+        | ServerMessage::ListedSessions { .. } => {
+            println!(
+                "Systemd session started successfully from {}",
+                file_path.display()
+            );
+            Ok(())
+        }
+        ServerMessage::Error { error } => Err(eyre!(
+            "Failed to start systemd session from config file: {}",
+            error
+        )),
+        val => Err(eyre!(
+            "Unexpected response while starting systemd session: {:?}",
+            val
+        )),
+    }
 }
 
 pub async fn handle_list_sessions(names_only: bool) -> Result<()> {

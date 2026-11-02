@@ -56,7 +56,7 @@ impl SessionManager {
         let session = self.get_session_by_id(id);
         match session {
             Some(session) => return session.get_windows(),
-            None => todo!(),
+            None => None,
         }
     }
 
@@ -72,6 +72,22 @@ impl SessionManager {
             kind: SessionKind::Ephemoral {
                 windows: window_id,
             },
+        };
+        self.sessions.insert(id, session);
+        id
+    }
+
+    pub fn create_sysd_session(&mut self, name: UnitName, windows: Vec<WindowId>) -> SessionId {
+        let id = self.generate_id();
+        let session = Session {
+            id,
+            name: name.to_string(),
+            kind: SessionKind::SysdBased( SysdSession {
+                 name, 
+                 state: SessionState::Running { windows }, 
+                 enabled: false 
+                })
+
         };
         self.sessions.insert(id, session);
         id
@@ -183,7 +199,7 @@ pub struct UnitName(String);
 impl UnitName {
     pub fn new(name: &str) -> Result<Self> {
         // TODO add actual verification here.
-        Ok(UnitName(name.to_string()))
+        Ok(UnitName(name.to_string().to_ascii_lowercase()))
     }
 
     pub fn to_string(&self) -> String {

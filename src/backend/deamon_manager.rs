@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 
-use crate::backend::session_manager::SessionId;
+use crate::backend::session_manager::{SessionId, UnitName};
 use crate::backend::systemd_service_manager::SystemdServiceManager;
 use crate::backend::terminal_manager::TerminalId;
 use crate::backend::window_manager::WindowId;
@@ -14,7 +14,7 @@ use crate::backend::{
 };
 use crate::ipc::protocol::{ClientMessage, ServerMessage, SessionInfo};
 use color_eyre::eyre::{Ok, OptionExt, Result, eyre};
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::Mutex;
 
 pub struct DaemonManager {
     user_manager: MiniUserManager,
@@ -89,13 +89,19 @@ impl DaemonManager {
             ClientMessage::StartSessionFromFile { file_path } => {
                 self.handle_start_session_from_file(file_path)
             }
-                ClientMessage::KillDaemon => {self.handle_kill_deamon(); Ok(ServerMessage::Ok)},
-            ClientMessage::UpdateSysdSessionEnabled { id, enabled } => todo!(),
-            ClientMessage::SetRunningSysdSession { id, should_run } => todo!(),
+            ClientMessage::KillDaemon => self.handle_kill_deamon(),
             ClientMessage::ExportSessionToFile { id, working_dir } => {
                 self.handle_export_session_to_file(id, working_dir)
             }
+            ClientMessage::ExecuteSysdActionSession { id, sysd_action } => todo!(),
+            ClientMessage::StartSysdSessionFromFile { file_path } => {
+                self.handle_start_sysd_session_from_file(file_path)
+            }
         }
+    }
+
+    fn handle_start_sysd_session_from_file(&mut self, file_path: PathBuf) -> Result<ServerMessage> {
+        todo!()
     }
 
     fn handle_export_session_to_file(
@@ -108,15 +114,13 @@ impl DaemonManager {
         let yaml = self.get_session_yaml(id)?;
         println!("path: {:?}, name {}", path, name);
         path.push(name);
-        path.add_extension(".yaml");
+        path.add_extension("yaml");
         fs::write(path.as_path(), yaml)?;
         Ok(ServerMessage::ExportedSessionToFile { path })
     }
+
     // TODO think about working directories and storing files
-    fn handle_start_session_from_file(
-        &mut self,
-        file_path: std::path::PathBuf,
-    ) -> Result<ServerMessage> {
+    fn handle_start_session_from_file(&mut self, file_path: PathBuf) -> Result<ServerMessage> {
         println!("Got file");
         let input = std::fs::read_to_string(file_path)?;
         let session_yaml: YamlSession = serde_yaml::from_str(&input)?;
@@ -145,26 +149,29 @@ impl DaemonManager {
     }
 
     fn handle_export_session(&mut self, id: SessionId) -> Result<ServerMessage> {
-        todo!();
-        // // Create .yaml file and store it
-        // let yaml = self.get_session_yaml(id);
-        // let name = self.get_session_info_by_id(id).name;
-        // let home = std::env::var("HOME")?;
-        // let path = PathBuf::from(home)
-        //     .join(".local/share/daemon_test")
-        //     .join(format!("{name}.yaml"));
-        // println!("Writing to: {:?}", path);
-        // std::fs::write(&path, yaml)?;
+        // Create .yaml for starting
+        // Store .yaml in ~/.local/share/{daemon_test}/{name}.service
+        // Generate sysd file pointing to .yaml
+        // Profit?
+        let yaml = self.get_session_yaml(id)?;
+        let name = self.get_session_info_by_id(id).name;
+        let home = std::env::var("HOME")?;
+        let path_to_yaml_file = PathBuf::from(home)
+            .join(".local/share/daemon_test")
+            .join(format!("{name}.yaml"));
 
-        // // Create systemd service that run that yaml.
-        // let manager = Arc::clone(&self.systemd_manager);
-        // tokio::spawn(async move {
-        //     let mut manager = manager.lock().await;
+        println!("Writing to: {:?}", path_to_yaml_file);
+        std::fs::write(&path_to_yaml_file, yaml)?;
+        let unit = UnitName::new(&name)?; // validate synchronously, so bad names reach the client
+        let manager = Arc::clone(&self.systemd_manager);
+        let path = path_to_yaml_file.clone();
 
-        //     if let Err(err) = manager.create_service_from_yaml(&path, name).await {
-        //         eprintln!("failed to create systemd service: {err:?}");
-        //     }
-        // });
+        tokio::spawn(async move {
+            let mut manager = manager.lock().await;
+            if let Err(err) = manager.create_service_from_yaml(&path, unit).await {
+                eprintln!("failed to create systemd service: {err:?}");
+            }
+        });
 
         Ok(ServerMessage::Ok)
     }
@@ -204,6 +211,7 @@ impl DaemonManager {
 
         Ok(serde_yaml::to_string(&yaml_session)?)
     }
+
     fn handle_change_window(&mut self, window_id: WindowId) -> ServerMessage {
         self.user_manager.clear_all();
         let terminal_id = self
@@ -219,6 +227,7 @@ impl DaemonManager {
         ServerMessage::Ok
     }
 
+    // TODO Remove
     fn handle_kill_terminal(&mut self, id: SessionId, terminal_id: TerminalId) -> ServerMessage {
         // Unsub from terminal
         // Kill terminal
@@ -234,6 +243,7 @@ impl DaemonManager {
         }
     }
 
+    // TODO find a more robust solution
     fn handle_kill_session(&mut self, id: SessionId) -> ServerMessage {
         // This command will only be given from the list selection
         let mut terminal_ids: Vec<TerminalId> = Vec::new();
@@ -295,7 +305,9 @@ impl DaemonManager {
         let (rows, cols) = self.user_manager.get_dimensions();
         let terminal_id = self.terminal_manager.create_terminal(rows, cols);
         let window_id = self.window_manager.create_window(terminal_id);
-        self.session_manager.add_window_to_session(id, window_id);
+        self.session_manager
+            .add_window_to_session(id, window_id)
+            .unwrap();
         self.user_manager.clear_all();
         self.user_manager.add_terminal(terminal_id);
         ServerMessage::UpdatedSession {
