@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use tempfile::TempDir;
 
@@ -10,7 +10,9 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
-        Self { dir: TempDir::new().unwrap() }
+        Self {
+            dir: TempDir::new().unwrap(),
+        }
     }
 
     fn socket(&self) -> PathBuf {
@@ -28,7 +30,10 @@ impl Harness {
 
     fn assert_daemon_healthy(&self, step: &str) {
         let err = fs::read_to_string(self.dir.path().join("daemon.err")).unwrap_or_default();
-        assert!(!err.contains("panicked"), "daemon panicked after '{step}':\n{err}");
+        assert!(
+            !err.contains("panicked"),
+            "daemon panicked after '{step}':\n{err}"
+        );
     }
 
     /// Runs the CLI, asserts success, returns stdout.
@@ -47,13 +52,41 @@ impl Harness {
     /// Runs the CLI, asserts failure, returns stderr.
     fn fails(&self, args: &[&str]) -> String {
         let out = self.raw(args);
-        assert!(!out.status.success(), "`{}` unexpectedly succeeded", args.join(" "));
+        assert!(
+            !out.status.success(),
+            "`{}` unexpectedly succeeded",
+            args.join(" ")
+        );
         self.assert_daemon_healthy(&args.join(" "));
         String::from_utf8_lossy(&out.stderr).into_owned()
     }
 
     fn sessions(&self) -> Vec<String> {
-        self.ok(&["list", "--names"]).lines().map(str::to_owned).collect()
+        self.ok(&["list", "--names"])
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// Exports a session into `dir` and returns (path, file contents).
+    fn export(&self, name: &str, dir: &Path) -> (PathBuf, String) {
+        fs::create_dir_all(dir).unwrap();
+        self.ok(&["export", name, "--dir", dir.to_str().unwrap()]);
+
+        // Find the exported file instead of parsing stdout.
+        let mut files: Vec<PathBuf> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("yaml"))
+            .collect();
+        assert_eq!(
+            files.len(),
+            1,
+            "expected exactly one yaml in {dir:?}, got {files:?}"
+        );
+        let path = files.remove(0);
+        let contents = fs::read_to_string(&path).unwrap();
+        (path, contents)
     }
 }
 
@@ -121,6 +154,45 @@ fn kill_daemon_stops_it() {
     h.ok(&["run", "sleep 10", "-n", "x"]);
     h.ok(&["kill-daemon"]);
     h.fails(&["list"]);
+}
+
+#[test]
+fn export_and_restore_session_roundtrip() {
+    let h = Harness::new();
+    let export_dir_1 = h.dir.path().join("export1");
+    let export_dir_2 = h.dir.path().join("export2");
+
+    // 1. Named session running a command
+    h.ok(&["run", "sleep 300", "--name", "roundtrip"]);
+    assert_eq!(h.sessions(), vec!["roundtrip"]);
+
+    // 2. Export it
+    let (yaml_path, yaml_1) = h.export("roundtrip", &export_dir_1);
+    assert!(
+        yaml_1.contains("roundtrip"),
+        "name missing from yaml:\n{yaml_1}"
+    );
+    assert!(
+        yaml_1.contains("sleep 300"),
+        "command missing from yaml:\n{yaml_1}"
+    );
+
+    // 3. Kill the original so the restored one is the only one
+    h.ok(&["kill", "roundtrip"]);
+    assert!(h.sessions().is_empty());
+
+    // 4. Start the same session from the file
+    h.ok(&["run", yaml_path.to_str().unwrap()]);
+    assert_eq!(h.sessions(), vec!["roundtrip"]);
+
+    // 5. Same info: re-exporting the restored session must give identical yaml
+    let (_, yaml_2) = h.export("roundtrip", &export_dir_2);
+    assert_eq!(yaml_1, yaml_2, "restored session differs from the original");
+
+    // 6. Kill it; every `ok` call already checked daemon.err for panics
+    h.ok(&["kill", "roundtrip"]);
+    assert!(h.sessions().is_empty());
+    h.assert_daemon_healthy("end of roundtrip test");
 }
 
 // Enable once the daemon enforces unique names:

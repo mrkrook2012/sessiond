@@ -4,7 +4,6 @@ use std::fs::{self, File};
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
-use zbus_systemd::zbus::Connection;
 
 pub mod backend;
 pub mod cli;
