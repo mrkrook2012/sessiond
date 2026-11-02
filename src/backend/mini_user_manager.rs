@@ -3,7 +3,7 @@ use crate::backend::{session_manager::SessionId, terminal_manager::TerminalId};
 pub struct MiniUserManager {
     rows: u16,
     cols: u16,
-    current_session_id: SessionId,
+    current_id: SessionId,
     visible_terminals: Vec<TerminalId>, 
 }
 
@@ -12,7 +12,7 @@ impl MiniUserManager {
         Self {
             rows: 100,
             cols: 100,
-            current_session_id: SessionId(1),
+            current_id: SessionId(1),
             visible_terminals: Vec::new(),
         }
         
@@ -43,12 +43,12 @@ impl MiniUserManager {
             self.visible_terminals.remove(pos);
         }
     }
-    pub fn get_current_session_id(&self) -> SessionId {
-        self.current_session_id
+    pub fn get_current_id(&self) -> SessionId {
+        self.current_id
     }
 
-    pub fn set_current_session_id(&mut self, session_id: SessionId) {
-        self.current_session_id = session_id
+    pub fn set_current_id(&mut self, id: SessionId) {
+        self.current_id = id
     }
 
     pub fn clear_all(&mut self) {

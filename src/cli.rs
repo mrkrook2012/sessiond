@@ -56,7 +56,7 @@ pub fn is_yaml_config_file(arg: &str) -> bool {
     has_yaml_ext && path.is_file()
 }
 
-pub fn generate_random_session_name() -> String {
+pub fn generate_random_name() -> String {
     let names = vec!["henk", "bink", "aardappel", "piet", "jannes"];
     let nr = rand::random_range(0..names.len());
     names.get(nr).unwrap().to_string()
@@ -140,14 +140,14 @@ pub async fn handle_run_command(command: String) -> Result<()> {
     }
 
     // Existing behavior: treat the argument as a literal shell command
-    let session_name = generate_random_session_name();
+    let name = generate_random_name();
 
-    println!("Starting session: {} (running: {})", session_name, command);
+    println!("Starting session: {} (running: {})", name, command);
 
     sender.send(&ClientMessage::CreateSession {
         working_dir: ".".to_string(),
         command: Some(command.clone()),
-        session_name: Some(session_name.clone()),
+        name: Some(name.clone()),
     })?;
 
     // Wait for ListedSessions message, discarding any other messages that might arrive first
@@ -173,12 +173,9 @@ pub async fn handle_run_command(command: String) -> Result<()> {
 
     let session_info = sessions
         .into_iter()
-        .find(|s| s.session_name == session_name)
+        .find(|s| s.name == name)
         .ok_or_else(|| color_eyre::eyre::eyre!("Failed to find newly created session in list"))?;
-    println!(
-        "Session created successfully: {}",
-        session_info.session_name
-    );
+    println!("Session created successfully: {}", session_info.name);
     Ok(())
 }
 
@@ -201,7 +198,7 @@ pub async fn handle_list_sessions() -> Result<()> {
             } else {
                 println!("Active sessions:");
                 for session in sessions {
-                    println!("- {}", session.session_name);
+                    println!("- {}", session.name);
                 }
             }
         }
@@ -223,26 +220,26 @@ pub async fn handle_attach_session(name: String) -> Result<()> {
         .split()
         .unwrap();
 
-    // We need to find the session_id from the name first.
+    // We need to find the id from the name first.
     // First, list sessions.
     sender.send(&ClientMessage::ListSessions)?;
 
-    let session_id = match receiver.recv::<ServerMessage>()? {
+    let id = match receiver.recv::<ServerMessage>()? {
         ServerMessage::ListedSessions { sessions } => sessions
             .into_iter()
-            .find(|s| s.session_name == name)
-            .map(|s| s.session_id)
+            .find(|s| s.name == name)
+            .map(|s| s.id)
             .ok_or_else(|| color_eyre::eyre::eyre!("Session not found: {}", name))?,
         _ => return Err(color_eyre::eyre::eyre!("Failed to list sessions.")),
     };
 
-    sender.send(&ClientMessage::OpenSession { session_id })?;
+    sender.send(&ClientMessage::OpenSession { id })?;
 
     match receiver.recv::<ServerMessage>()? {
         ServerMessage::UpdatedSession { session_info } => {
             println!(
                 "Attached to session: {} (window with terminal running)",
-                session_info.session_name
+                session_info.name
             );
         }
         _ => {
@@ -265,16 +262,16 @@ pub async fn handle_kill_session(name: String) -> Result<()> {
 
     sender.send(&ClientMessage::ListSessions)?;
 
-    let session_id = match receiver.recv::<ServerMessage>()? {
+    let id = match receiver.recv::<ServerMessage>()? {
         ServerMessage::ListedSessions { sessions } => sessions
             .into_iter()
-            .find(|s| s.session_name == name)
-            .map(|s| s.session_id)
+            .find(|s| s.name == name)
+            .map(|s| s.id)
             .ok_or_else(|| color_eyre::eyre::eyre!("Session not found: {}", name))?,
         _ => return Err(color_eyre::eyre::eyre!("Failed to list sessions.")),
     };
 
-    sender.send(&ClientMessage::KillSession { session_id })?;
+    sender.send(&ClientMessage::KillSession { id })?;
 
     match receiver.recv::<ServerMessage>()? {
         ServerMessage::ListedSessions { .. } => {
@@ -306,16 +303,14 @@ pub async fn handle_kill_all_sessions() -> Result<()> {
     // First, list all sessions
     sender.send(&ClientMessage::ListSessions)?;
 
-    let session_ids: Vec<SessionId> = match receiver.recv::<ServerMessage>()? {
-        ServerMessage::ListedSessions { sessions } => {
-            sessions.into_iter().map(|s| s.session_id).collect()
-        }
+    let ids: Vec<SessionId> = match receiver.recv::<ServerMessage>()? {
+        ServerMessage::ListedSessions { sessions } => sessions.into_iter().map(|s| s.id).collect(),
         _ => return Err(color_eyre::eyre::eyre!("Failed to list sessions.")),
     };
 
     // Kill all sessions
-    for session_id in session_ids {
-        sender.send(&ClientMessage::KillSession { session_id })?;
+    for id in ids {
+        sender.send(&ClientMessage::KillSession { id })?;
 
         // We don't need to wait for a response for each kill, just proceed with all
     }

@@ -21,10 +21,10 @@ pub enum ClientMessage {
     },
 
     CreateWindow {
-        session_id: SessionId,
+        id: SessionId,
     },
     KillWindow {
-        session_id: SessionId,
+        id: SessionId,
         window_id: WindowId,
     },
     ChangeWindow {
@@ -35,19 +35,29 @@ pub enum ClientMessage {
     CreateSession {
         working_dir: String,
         command: Option<String>,
-        session_name: Option<String>,
+        name: Option<String>,
     },
     OpenSession {
-        session_id: SessionId,
+        id: SessionId,
     },
     ListSessions,
     ExitSession,
     KillSession {
-        session_id: SessionId,
+        id: SessionId,
     },
 
     ExportSession {
-        session_id: SessionId,
+        id: SessionId,
+    },
+
+    UpdateSysdSessionEnabled {
+        id: SessionId,
+        enabled: bool, 
+    },
+
+    SetRunningSysdSession {
+        id: SessionId,
+        should_run: bool,
     },
 
     StartSessionFromFile {
@@ -64,7 +74,7 @@ pub enum ClientMessage {
 
     // Should not be used, kill the window instead.
     KillTerminal {
-        session_id: SessionId,
+        id: SessionId,
         terminal_id: TerminalId,
     },
 
@@ -93,7 +103,7 @@ pub enum ServerMessage {
 
 // #[derive(Decode, Encode, Debug, Clone)]
 // pub struct ExportSessionInfo {
-//     pub session_name: String,
+//     pub name: String,
 //     pub windows_info: Vec<WindowInfo>,
 // }
 
@@ -105,8 +115,8 @@ pub enum ServerMessage {
 
 #[derive(Decode, Encode, Debug, Clone)]
 pub struct SessionInfo {
-    pub session_id: SessionId,
-    pub session_name: String,
+    pub id: SessionId,
+    pub name: String,
     pub windows_info: Vec<WindowInfo>,
 }
 
@@ -126,10 +136,10 @@ impl WindowInfo {
 }
 
 impl SessionInfo {
-    pub fn new(session_id: SessionId, session_name: String, windows_info: Vec<WindowInfo>) -> Self {
+    pub fn new(id: SessionId, name: String, windows_info: Vec<WindowInfo>) -> Self {
         Self {
-            session_id,
-            session_name,
+            id,
+            name,
             windows_info,
         }
     }

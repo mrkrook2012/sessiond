@@ -265,7 +265,7 @@ pub fn run_frontend() -> Result<()> {
                     let refreshed_current = st.current_session.as_ref().and_then(|current| {
                         sessions
                             .iter()
-                            .find(|listed| listed.session_id == current.session_id)
+                            .find(|listed| listed.id == current.id)
                             .cloned()
                     });
 
@@ -366,7 +366,7 @@ pub fn run_frontend() -> Result<()> {
                                         .send(&ClientMessage::CreateSession {
                                             working_dir,
                                             command: None,
-                                            session_name: Some(name),
+                                            name: Some(name),
                                         })
                                         .unwrap();
                                     continue;
@@ -408,10 +408,10 @@ pub fn run_frontend() -> Result<()> {
                             // c: new window
                             KeyCode::Char('c') => {
                                 if let Some(session) = st.current_session.as_ref() {
-                                    let session_id = session.session_id;
+                                    let id = session.id;
                                     drop(st);
                                     sender
-                                        .send(&ClientMessage::CreateWindow { session_id })
+                                        .send(&ClientMessage::CreateWindow { id })
                                         .unwrap();
                                 }
                             }
@@ -470,10 +470,10 @@ pub fn run_frontend() -> Result<()> {
                             // last window, killing it closes the session
                             // entirely (we'll get a ListedSessions back),
                             // so there's nothing to change focus to.
-                            // KillWindow now also carries the session_id.
+                            // KillWindow now also carries the id.
                             KeyCode::Char('x') => {
                                 if let Some(session) = st.current_session.as_ref() {
-                                    let session_id = session.session_id;
+                                    let id = session.id;
                                     let len = session.windows_info.len();
                                     let window_id =
                                         session.windows_info[st.current_window_index].window_id;
@@ -500,7 +500,7 @@ pub fn run_frontend() -> Result<()> {
                                     drop(st);
                                     sender
                                         .send(&ClientMessage::KillWindow {
-                                            session_id,
+                                            id,
                                             window_id,
                                         })
                                         .unwrap();
@@ -556,20 +556,20 @@ pub fn run_frontend() -> Result<()> {
                             }
                             KeyCode::Enter | KeyCode::Char('o') => {
                                 if let Some(session) = st.selected_session() {
-                                    let session_id = session.session_id;
+                                    let id = session.id;
                                     drop(st);
                                     sender
-                                        .send(&ClientMessage::OpenSession { session_id })
+                                        .send(&ClientMessage::OpenSession { id })
                                         .unwrap();
                                     continue;
                                 }
                             }
                             KeyCode::Char('x') | KeyCode::Char('d') => {
                                 if let Some(session) = st.selected_session() {
-                                    let session_id = session.session_id;
+                                    let id = session.id;
                                     drop(st);
                                     sender
-                                        .send(&ClientMessage::KillSession { session_id })
+                                        .send(&ClientMessage::KillSession { id })
                                         .unwrap();
                                     sender.send(&ClientMessage::ListSessions).unwrap();
                                     continue;
@@ -581,11 +581,11 @@ pub fn run_frontend() -> Result<()> {
                             // arm above for the status update.
                             KeyCode::Char('e') => {
                                 if let Some(session) = st.selected_session() {
-                                    let session_id = session.session_id;
+                                    let id = session.id;
                                     st.status = "Exporting session...".to_owned();
                                     drop(st);
                                     sender
-                                        .send(&ClientMessage::ExportSession { session_id })
+                                        .send(&ClientMessage::ExportSession { id })
                                         .unwrap();
                                     continue;
                                 }
@@ -832,8 +832,8 @@ fn draw_session_list(frame: &mut ratatui::Frame, area: Rect, st: &AppState) {
             .map(|s| {
                 ListItem::new(format!(
                     "{} (id {:?}, {} window(s))",
-                    s.session_name,
-                    s.session_id,
+                    s.name,
+                    s.id,
                     s.windows_info.len()
                 ))
             })
@@ -887,17 +887,17 @@ fn draw_terminal_screen(frame: &mut ratatui::Frame, area: Rect, st: &AppState) {
         })
         .unwrap_or_default();
 
-    let session_name = st
+    let name = st
         .current_session
         .as_ref()
-        .map(|s| s.session_name.clone())
+        .map(|s| s.name.clone())
         .unwrap_or_default();
 
     let tabs = Tabs::new(titles)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(format!("Session: {session_name}")),
+                .title(format!("Session: {name}")),
         )
         .select(st.current_window_index)
         .highlight_style(

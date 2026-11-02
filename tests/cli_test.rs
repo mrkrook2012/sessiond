@@ -35,7 +35,7 @@ fn test_cli_lifecycle() {
 
     let stdout_run = String::from_utf8_lossy(&output_run.stdout);
     // Output format: "Starting session: session-Henk (running: sleep 10)"
-    let session_name = stdout_run
+    let name = stdout_run
         .lines()
         .find(|line| line.contains("Starting session:"))
         .and_then(|line| {
@@ -49,7 +49,7 @@ fn test_cli_lifecycle() {
         })
         .expect("Could not find session name in run output");
 
-    println!("Found session name: {}", session_name);
+    println!("Found session name: {}", name);
 
     // 3. List sessions
     let output_list = run_cli(vec!["list"]);
@@ -62,13 +62,13 @@ fn test_cli_lifecycle() {
 
     let stdout_list = String::from_utf8_lossy(&output_list.stdout);
     assert!(
-        stdout_list.contains(&session_name),
+        stdout_list.contains(&name),
         "Session {} not found in list output",
-        session_name
+        name
     );
 
     // 4. Kill the session
-    let output_kill = run_cli(vec!["kill", &session_name]);
+    let output_kill = run_cli(vec!["kill", &name]);
     assert!(
         output_kill.status.success(),
         "Kill command failed: {:?}",
@@ -87,9 +87,9 @@ fn test_cli_lifecycle() {
 
     let stdout_list_after = String::from_utf8_lossy(&output_list_after.stdout);
     assert!(
-        !stdout_list_after.contains(&session_name),
+        !stdout_list_after.contains(&name),
         "Session {} still found in list output after kill",
-        session_name
+        name
     );
 
     // Cleanup sockets again just in case
