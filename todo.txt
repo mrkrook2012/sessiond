@@ -10,8 +10,9 @@ todo:
   - Add event based sysd status tracking
   - make CI/CD pipeline V
   - Finalize systemd integration
+  - Fish hints integration
   - Clean up CLI 
-  - Create ValidSessionId type 
+  - Create ValidSessionId type ?
   - Clean logging
   - Think of an actual name
   - Simple .deb release pipeline

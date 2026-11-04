@@ -5,6 +5,7 @@ use crate::backend::{
     session_manager::{SessionId, SessionState}, terminal_manager::TerminalId, window_manager::WindowId,
 };
 
+// TODO remove SessionId from protocol, should be string, we'll parse it later. 
 #[derive(Decode, Encode, Debug)]
 pub enum ClientMessage {
     Ping,
@@ -108,7 +109,7 @@ pub enum SysdAction {
     Disable,
 }
 
-#[derive(Decode, Encode, Debug)]
+#[derive(Decode, Encode, Debug, Clone)]
 pub enum ServerMessage {
     Ok,
     Pong,
@@ -175,7 +176,7 @@ impl SessionInfo {
     }
 }
 
-#[derive(Decode, Encode, Debug)]
+#[derive(Decode, Encode, Debug, Clone)]
 pub struct TerminalUpdate {
     pub terminal_id: TerminalId,
     pub data: Vec<u8>,
