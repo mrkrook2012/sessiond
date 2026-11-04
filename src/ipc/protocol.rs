@@ -1,12 +1,15 @@
 use bincode_next::{Decode, Encode};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::backend::{
-    session_manager::{SessionId, SessionState}, terminal_manager::TerminalId, window_manager::WindowId,
+    session_manager::{SessionId, SessionState},
+    terminal_manager::TerminalId,
+    window_manager::WindowId,
 };
 
-// TODO remove SessionId from protocol, should be string, we'll parse it later. 
-#[derive(Decode, Encode, Debug)]
+// TODO remove SessionId from protocol, should be string, we'll parse it later.
+#[derive(Decode, Encode, Debug, Serialize, serde::Deserialize)]
 pub enum ClientMessage {
     Ping,
 
@@ -72,7 +75,7 @@ pub enum ClientMessage {
     },
 
     StopSysdSession {
-        id: SessionId
+        id: SessionId,
     },
 
     // Reserved for manual terminal creation
@@ -99,8 +102,7 @@ pub enum ClientMessage {
     // Useful for cli
 }
 
-
-#[derive(Decode, Encode, Debug)]
+#[derive(Decode, Encode, Debug, Serialize, serde::Deserialize)]
 pub enum SysdAction {
     Start,
     Stop,
@@ -109,7 +111,7 @@ pub enum SysdAction {
     Disable,
 }
 
-#[derive(Decode, Encode, Debug, Clone)]
+#[derive(Decode, Encode, Debug, Clone, Serialize, serde::Deserialize)]
 pub enum ServerMessage {
     Ok,
     Pong,
@@ -136,21 +138,21 @@ pub enum ServerMessage {
 //     pub command: String,
 // }
 
-#[derive(Decode, Encode, Debug, Clone)]
+#[derive(Decode, Encode, Debug, Clone, Serialize, serde::Deserialize)]
 pub struct SessionInfo {
     pub id: SessionId,
     pub name: String,
     pub windows_info: Vec<WindowInfo>,
-    pub sysd_data: Option<SysdData>,// maybe improve later
+    pub sysd_data: Option<SysdData>, // maybe improve later
 }
 
-#[derive(Decode, Encode, Debug, Clone)]
+#[derive(Decode, Encode, Debug, Clone, Serialize, serde::Deserialize)]
 pub struct SysdData {
     pub enabled: bool,
     pub running: bool,
 }
 
-#[derive(Decode, Encode, Debug, Clone)]
+#[derive(Decode, Encode, Debug, Clone, Serialize, serde::Deserialize)]
 pub struct WindowInfo {
     pub window_id: WindowId,
     pub terminal_id: TerminalId,
@@ -166,17 +168,22 @@ impl WindowInfo {
 }
 
 impl SessionInfo {
-    pub fn new(id: SessionId, name: String, windows_info: Vec<WindowInfo>, sysd_data: Option<SysdData>) -> Self {
+    pub fn new(
+        id: SessionId,
+        name: String,
+        windows_info: Vec<WindowInfo>,
+        sysd_data: Option<SysdData>,
+    ) -> Self {
         Self {
             id,
             name,
             windows_info,
-            sysd_data
+            sysd_data,
         }
     }
 }
 
-#[derive(Decode, Encode, Debug, Clone)]
+#[derive(Decode, Encode, Debug, Clone, Serialize, serde::Deserialize)]
 pub struct TerminalUpdate {
     pub terminal_id: TerminalId,
     pub data: Vec<u8>,

@@ -1,4 +1,5 @@
 use bincode_next::{Decode, Encode};
+use serde::Serialize;
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap},
@@ -18,7 +19,7 @@ use crate::{
     ipc::protocol::SysdData,
 };
 
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, AssignOps, Encode, Decode)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, AssignOps, Encode, Decode, Serialize, serde::Deserialize)]
 pub struct SessionId(pub u64);
 
 pub struct SessionManager {

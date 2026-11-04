@@ -3,12 +3,13 @@ use std::collections::{BinaryHeap, HashMap};
 use bincode_next::{Decode, Encode};
 
 use mk_utils::AssignOps;
+use serde::Serialize;
 
 use crate::backend::virtual_terminal::VirtualTerminal;
 use crate::ipc::protocol::*;
 // If a second person inspects the same session, we will not resize and their frontend will adapt
 
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, AssignOps, Encode, Decode)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, AssignOps, Encode, Decode, Serialize, serde::Deserialize)]
 pub struct TerminalId(u64);
 
 pub struct TerminalManager {

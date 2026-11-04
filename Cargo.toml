@@ -18,7 +18,14 @@ serde_yaml = "0.9.34"
 tokio = {version = "1.53.1", features=["full"]}
 vt100 = "0.16.2"
 zbus_systemd = { version = "0.26100", features = ["systemd1", "zbus-async-tokio"] }
-tarpc = "0.38.0"
+tarpc = { version = "0.38", features = [
+    "tokio1",
+    "serde-transport",
+    "unix",
+    "serde1",
+    "serde-transport-bincode",
+] }
+futures = "0.3"
 
 [dev-dependencies]
 tempfile = "3"

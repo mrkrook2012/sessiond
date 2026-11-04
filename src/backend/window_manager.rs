@@ -5,13 +5,14 @@ use std::{
 
 use bincode_next::{Decode, Encode};
 use mk_utils::AssignOps;
+use serde::Serialize;
 
 use crate::{
     backend::{terminal_manager::TerminalId, window::Window},
     ipc::protocol::WindowInfo,
 };
 
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, AssignOps, Encode, Decode)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, AssignOps, Encode, Decode, Serialize, serde::Deserialize)]
 pub struct WindowId(u64);
 
 pub struct WindowManager {
