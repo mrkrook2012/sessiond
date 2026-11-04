@@ -40,6 +40,9 @@ async fn main() -> Result<()> {
         Some(cli::Commands::StartSysd { file_path }) => {
             cli::handle_start_sysd(file_path).await?;
         }
+        Some(cli::Commands::StopSysd { name }) => {
+            cli::handle_stop_sysd(name).await?;
+        }
         Some(cli::Commands::Kill { name }) => {
             cli::handle_kill_session(name).await?;
         }

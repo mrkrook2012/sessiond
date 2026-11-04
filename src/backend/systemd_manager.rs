@@ -1,8 +1,7 @@
 use color_eyre::eyre::Result;
-use std::fmt::format;
+use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
-use std::fs;
 
 use crate::backend::session_manager::UnitName;
 
@@ -17,16 +16,22 @@ impl SystemdManager {
     ) -> Result<()> {
         let mut service_file_path_buffer = sysd_directory.to_path_buf();
         service_file_path_buffer.push(name.to_string());
+        service_file_path_buffer.add_extension("service");
         let bin_path = std::env::current_exe()
             .unwrap()
             .to_str()
             .unwrap()
             .to_owned();
-        let start_command = format!("{bin_path} start-sysd {:?}",path_to_config_file.as_path());
+        let start_command = format!("{bin_path} start-sysd {:?}", path_to_config_file.as_path());
         let stop_command = format!("{bin_path} stop-sysd {:?}", name.to_string());
 
-        let file_contents =
-            Self::get_filled_template(&user, sysd_directory, start_command, stop_command, RestartPolicy::No);
+        let file_contents = Self::get_filled_template(
+            &user,
+            sysd_directory,
+            start_command,
+            stop_command,
+            RestartPolicy::No,
+        );
         fs::write(service_file_path_buffer, file_contents).unwrap();
 
         Ok(())

@@ -70,6 +70,10 @@ pub enum ClientMessage {
         file_path: PathBuf,
     },
 
+    StopSysdSession {
+        id: SessionId
+    },
+
     // Reserved for manual terminal creation
     // Should be unused, create new window is only way.
     CreateTerminal {
@@ -93,6 +97,7 @@ pub enum ClientMessage {
     KillDaemon,
     // Useful for cli
 }
+
 
 #[derive(Decode, Encode, Debug)]
 pub enum SysdAction {

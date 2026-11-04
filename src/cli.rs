@@ -78,6 +78,11 @@ pub enum Commands {
         /// Path to the session config file (yaml)
         file_path: PathBuf,
     },
+    /// Stops a systemd-managed session by name, on behalf of systemd
+    StopSysd {
+        /// The name of the session to stop
+        name: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +321,31 @@ pub async fn handle_start_sysd(file_path: PathBuf) -> Result<()> {
         )),
         val => Err(eyre!(
             "Unexpected response while starting systemd session: {:?}",
+            val
+        )),
+    }
+}
+
+/// `stop-sysd <name>`: asks the daemon to stop a systemd-managed session.
+/// Does not start the daemon: if it isn't running there is nothing to stop.
+pub async fn handle_stop_sysd(name: String) -> Result<()> {
+    let (mut sender, mut receiver) = connect()?;
+    let id = find_session_id(&mut sender, &mut receiver, &name)?;
+
+    println!("Stopping systemd session: {}", name);
+
+    sender.send(&ClientMessage::StopSysdSession { id })?;
+
+    match receiver.recv::<ServerMessage>()? {
+        ServerMessage::Ok
+        | ServerMessage::UpdatedSession { .. }
+        | ServerMessage::ListedSessions { .. } => {
+            println!("Systemd session stopped successfully: {}", name);
+            Ok(())
+        }
+        ServerMessage::Error { error } => Err(eyre!("Failed to stop systemd session: {}", error)),
+        val => Err(eyre!(
+            "Unexpected response while stopping systemd session: {:?}",
             val
         )),
     }

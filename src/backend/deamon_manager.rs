@@ -12,8 +12,9 @@ use crate::backend::{
     mini_user_manager::MiniUserManager, session_manager::SessionManager,
     terminal_manager::TerminalManager, window_manager::WindowManager,
 };
+use crate::ipc::consts::socket_path;
 use crate::ipc::protocol::{ClientMessage, ServerMessage, SessionInfo, SysdAction, SysdData};
-use color_eyre::eyre::{Ok, OptionExt, Result, eyre};
+use color_eyre::eyre::{Ok, OptionExt, Result, bail, eyre};
 use tokio::sync::Mutex;
 
 pub struct DaemonManager {
@@ -21,7 +22,7 @@ pub struct DaemonManager {
     terminal_manager: TerminalManager,
     window_manager: WindowManager,
     session_manager: SessionManager,
-    systemd_manager: Arc<Mutex<SystemdServiceManager>>,
+    systemd_manager: Arc<Mutex<SystemdServiceManager>>, //TODO Remove the mutex when cleaning up async
 }
 
 impl DaemonManager {
@@ -93,16 +94,89 @@ impl DaemonManager {
             ClientMessage::ExportSessionToFile { id, working_dir } => {
                 self.handle_export_session_to_file(id, working_dir)
             }
-            ClientMessage::ExecuteSysdActionSession { id, sysd_action } => todo!(),
+            ClientMessage::ExecuteSysdActionSession { id, sysd_action } => {
+                self.handle_execute_sysd_action(id, sysd_action)
+            }
+
             ClientMessage::StartSysdSessionFromFile { file_path } => {
                 self.handle_start_sysd_session_from_file(file_path)
             }
+            ClientMessage::StopSysdSession { id } => self.handle_stop_sysd_session(id),
         }
     }
-    fn handle_execute_sysd_action(&mut self, id: SessionId, sysd_action: SysdAction) -> Result<ServerMessage> {
-        //
+
+    fn handle_stop_sysd_session(&mut self, id: SessionId) -> Result<ServerMessage> {
+        // Find the current session,
+        // Remove all windows,
+        // Kill all terminals
+        // Then change state to stopped
+        println!("Stopping sysd session: {:?}", id);
+        let session = self
+            .session_manager
+            .get_session_by_id_mut(id)
+            .ok_or_eyre("Session not found")?;
+
+        // Get all the terminals and windows
+        let window_ids = self
+            .session_manager
+            .get_all_windows_from_session(id)
+            .ok_or_eyre("Found no windows in session")?;
+        let mut terminal_ids: Vec<TerminalId> = vec![];
+        for window_id in window_ids {
+            terminal_ids.push(
+                self.window_manager
+                    .get_terminal_id_from_window_id(window_id),
+            );
+        }
+
+        println!("Session has windows: {:?}", window_ids);
+        println!("Session has terminals: {:?}", terminal_ids);
+
+        // Remove all running terminals and refrences to them
+        for terminal_id in terminal_ids {
+            self.terminal_manager.kill_terminal(terminal_id);
+        }
+        for window_id in window_ids {
+            self.window_manager.kill_window(*window_id);
+        }
 
         Ok(ServerMessage::Ok)
+    }
+
+    fn handle_execute_sysd_action(
+        &mut self,
+        id: SessionId,
+        sysd_action: SysdAction,
+    ) -> Result<ServerMessage> {
+        // These should trigger the sysd command,
+        // This will cause the execution of start/stop-sysd, which will actually change the state
+        // Enabling/disablng will be done here, as they don't actually affect the session
+        let session = self
+            .session_manager
+            .get_session_by_id_mut(id)
+            .ok_or_eyre("Session not found")?;
+        match &mut session.kind {
+            SessionKind::Ephemoral { windows } => {
+                bail!("Cannot call sysd operation on non-sysd session")
+            }
+            SessionKind::SysdBased(sysd_session) => {
+                // Match on different kinds of operation
+                match sysd_action {
+                    // These will trigger sysd-start/stop due to them being present in the sysd file.
+                    // This file contains the info needed for a start and stop
+                    SysdAction::Start => sysd_session.start(),
+                    SysdAction::Stop => sysd_session.stop(),
+
+                    SysdAction::Restart => sysd_session.restart(),
+                    SysdAction::Enable => sysd_session.enable(),
+                    SysdAction::Disable => sysd_session.disable(),
+                }
+            }
+        }
+
+        Ok(ServerMessage::ListedSessions {
+            sessions: self.get_all_session_info(),
+        })
     }
 
     fn handle_start_sysd_session_from_file(&mut self, file_path: PathBuf) -> Result<ServerMessage> {
@@ -129,8 +203,7 @@ impl DaemonManager {
             windows.push(window_id);
         }
 
-        self.session_manager
-            .create_sysd_session( name, windows);
+        self.session_manager.create_sysd_session(name, windows);
         Ok(ServerMessage::Ok)
     }
 
@@ -196,6 +269,7 @@ impl DaemonManager {
         let manager = Arc::clone(&self.systemd_manager);
         let path = path_to_yaml_file.clone();
 
+        // TODO, this might not actualy succeed
         tokio::spawn(async move {
             let mut manager = manager.lock().await;
             if let Err(err) = manager.create_service_from_yaml(&path, unit).await {
@@ -440,7 +514,7 @@ impl DaemonManager {
                         })
                         .collect(),
                     match &session.kind {
-                        SessionKind::Ephemoral { windows } => None,
+                        SessionKind::Ephemoral { windows: _ } => None,
                         SessionKind::SysdBased(sysd_session) => Some(sysd_session.get_sysd_data()),
                     },
                 )
@@ -464,7 +538,7 @@ impl DaemonManager {
                 })
                 .collect(),
             match &session.kind {
-                SessionKind::Ephemoral { windows } => None,
+                SessionKind::Ephemoral { windows: _ } => None,
                 SessionKind::SysdBased(sysd_session) => Some(sysd_session.get_sysd_data()),
             },
         )
@@ -477,6 +551,7 @@ impl DaemonManager {
     }
 
     fn handle_kill_deamon(&self) -> ! {
+        std::fs::remove_file(socket_path()).unwrap();
         std::process::exit(0);
     }
 }

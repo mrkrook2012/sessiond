@@ -2,16 +2,22 @@ todo:
   - Fix tests V
   - Add file only export V
   - Add tests for file stuff V
-  - Add systemd integration
+  - Add basic systemd integration V
+  - Clean up Async work / networking
+  - Add adding stale sysd services
   - Add daemon based duplicate name rejection
+  - Add removing stale sysd services 
+  - Add event based sysd status tracking
   - make CI/CD pipeline V
   - Finalize systemd integration
-  - Clean up Async work
+  - Clean up CLI 
+  - Create ValidSessionId type 
+  - Clean logging
+  - Think of an actual name
+  - Simple .deb release pipeline
   - Multi user 
   - Optimize screen transfer
   - Rewrite frontend
-  - Remove some Unwrap()
-  - Look at IPC solution
   - Improve error handling in the frontend. 
   - Improve startup robustness and error handling
   - Understand the macro language
@@ -26,3 +32,7 @@ the sysd varient must only be used in the sysd file.
 this way, using the sysd systmctl to restart will also work. 
 the stop and start sysd versions will not create new session, they will toggle 
 the initializion of the session will be plugged into the load feature of sysd. 
+
+The Stop is never sent when stopping or when restarting due to the service type being a oneshot that is supposed to exit 
+This means that we only get start messages
+temp solution is when starting an already started sysd session, we restart <- incorrect

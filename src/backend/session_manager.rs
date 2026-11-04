@@ -7,7 +7,7 @@ use std::{
     vec,
 };
 
-use color_eyre::eyre::{Ok, OptionExt, Result, eyre};
+use color_eyre::eyre::{Ok, OptionExt, Result, bail, eyre};
 use mk_utils::AssignOps;
 
 use crate::{
@@ -34,6 +34,35 @@ impl SessionManager {
             free_ids: BinaryHeap::new(),
             sessions: HashMap::new(),
         }
+    }
+
+    // Only used on dormant sessions
+    pub fn start_sysd_session(&mut self, id: SessionId, windows: Vec<WindowId>) -> Result<()> {
+        let session = self
+            .get_session_by_id_mut(id)
+            .ok_or_eyre("Session not found")?;
+
+        match &mut session.kind {
+            SessionKind::Ephemoral { windows: _ } => bail!("Tried to start a non sysd session"),
+            SessionKind::SysdBased(sysd_session) => {
+                sysd_session.state = SessionState::Running { windows }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn stop_sysd_session(&mut self, id: SessionId) -> Result<()> {
+        let session = self
+            .get_session_by_id_mut(id)
+            .ok_or_eyre("Session not found")?;
+
+        match &mut session.kind {
+            SessionKind::Ephemoral { windows: _ } => bail!("Tried to start a non sysd session"),
+            SessionKind::SysdBased(sysd_session) => {
+                sysd_session.state = SessionState::Stopped
+            }
+        }
+        Ok(())
     }
 
     pub fn remove_window_from_session(&mut self, id: SessionId, window_id: WindowId) -> Result<()> {
@@ -107,7 +136,7 @@ impl SessionManager {
         self.sessions.get(&id)
     }
 
-    fn get_session_by_id_mut(&mut self, id: SessionId) -> Option<&mut Session> {
+    pub fn get_session_by_id_mut(&mut self, id: SessionId) -> Option<&mut Session> {
         self.sessions.get_mut(&id)
     }
     pub fn list_sessions(&self) -> Vec<&Session> {
@@ -168,6 +197,7 @@ pub struct SysdSession {
 
 impl SysdSession {
     // TODO improve this by using the actual commands
+    // This code wont change the state, will be done temp by start-sysd command
     pub fn start(&mut self) {
         Command::new("systemctl")
             .arg("--user")
@@ -185,6 +215,14 @@ impl SysdSession {
             .output()
             .unwrap();
     }
+    pub fn restart(&mut self) {
+        Command::new("systemctl")
+            .arg("--user")
+            .arg("restart")
+            .arg(format!("{}", self.name.to_string()))
+            .output()
+            .unwrap();
+    }
 
     pub fn enable(&mut self) {
         Command::new("systemctl")
@@ -193,6 +231,7 @@ impl SysdSession {
             .arg(format!("{}", self.name.to_string()))
             .output()
             .unwrap();
+        self.enabled = true;
     }
 
     pub fn disable(&mut self) {
@@ -202,6 +241,7 @@ impl SysdSession {
             .arg(format!("{}", self.name.to_string()))
             .output()
             .unwrap();
+        self.enabled = false;
     }
     pub fn get_sysd_data(&self) -> SysdData {
         SysdData {
