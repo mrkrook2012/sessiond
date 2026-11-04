@@ -209,12 +209,17 @@ fn run_manager(mut daemon_manager: DaemonManager, events: Receiver<Event>) {
 
             if !clients.is_empty() {
                 let data = daemon_manager.get_wanted_data();
-                clients.retain(|_, outbox| {
-                    !matches!(
-                        outbox.try_send(data.clone()),
-                        Err(TrySendError::Disconnected(_))
-                    )
-                });
+                match &data {
+                    ServerMessage::TerminalData { terminals } => {
+                        clients.retain(|_, outbox| {
+                            !matches!(
+                                outbox.try_send(data.clone()),
+                                Err(TrySendError::Disconnected(_))
+                            )
+                        });
+                    }
+                    _ => {}
+                }
             }
         }
     }

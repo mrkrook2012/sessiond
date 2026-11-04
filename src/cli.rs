@@ -133,10 +133,23 @@ fn connect() -> Result<(IpcSender, IpcReceiver)> {
 
 fn list_sessions(sender: &mut IpcSender, receiver: &mut IpcReceiver) -> Result<Vec<SessionInfo>> {
     sender.send(&ClientMessage::ListSessions)?;
-    match receiver.recv::<ServerMessage>()? {
-        ServerMessage::ListedSessions { sessions } => Ok(sessions),
-        ServerMessage::Error { error } => Err(eyre!("Failed to list sessions: {}", error)),
-        _ => Err(eyre!("Failed to list sessions.")),
+
+    loop {
+        match receiver.recv::<ServerMessage>()? {
+            ServerMessage::ListedSessions { sessions } => {
+                return Ok(sessions);
+            }
+            ServerMessage::Error { error } => {
+                return Err(eyre!("Failed to list sessions: {}", error));
+            }
+            ServerMessage::TerminalData { .. } => {
+                // Ignore unsolicited periodic updates.
+                continue;
+            }
+            other => {
+                return Err(eyre!("Unexpected response to ListSessions: {:?}", other));
+            }
+        }
     }
 }
 
