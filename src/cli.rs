@@ -8,10 +8,9 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::backend::session_manager::SessionId;
-use crate::ipc::client;
+use crate::ipc::client::DaemonClient;
 use crate::ipc::consts::socket_path;
-use crate::ipc::protocol::{ClientMessage, ServerMessage, SessionInfo};
-use crate::ipc::service::DaemonServiceClient;
+use crate::ipc::protocol::SessionInfo;
 
 /// Directory for daemon.out / daemon.err.
 const LOG_DIR_ENV_VAR: &str = "DAEMON_TEST_LOG_DIR";
@@ -38,13 +37,9 @@ pub enum Commands {
         names: bool,
     },
     /// Attaches to an existing session by name
-    Attach {
-        name: String,
-    },
+    Attach { name: String },
     /// Kills an existing session by name
-    Kill {
-        name: String,
-    },
+    Kill { name: String },
     /// Kills all active sessions
     KillAll,
     /// Kills the daemon process and waits until it has stopped
@@ -60,17 +55,11 @@ pub enum Commands {
         dir: Option<PathBuf>,
     },
     /// Exports a session as a systemd service
-    ExportSysd {
-        name: String,
-    },
+    ExportSysd { name: String },
     /// Starts a session from a config file on behalf of systemd
-    StartSysd {
-        file_path: PathBuf,
-    },
+    StartSysd { file_path: PathBuf },
     /// Stops a systemd-managed session by name, on behalf of systemd
-    StopSysd {
-        name: String,
-    },
+    StopSysd { name: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -97,41 +86,21 @@ pub fn daemon_running() -> bool {
 }
 
 /// Connect to the running daemon using tarpc.
-async fn connect() -> Result<DaemonServiceClient> {
+async fn connect() -> Result<DaemonClient> {
     if !daemon_running() {
         return Err(eyre!("Daemon not running."));
     }
 
-    client::connect().await
-}
-
-/// Send an RPC request.
-async fn send(
-    rpc: &DaemonServiceClient,
-    message: ClientMessage,
-) -> Result<ServerMessage> {
-    client::send(rpc, message).await
+    DaemonClient::connect().await
 }
 
 /// Retrieve all active sessions.
-async fn list_sessions(rpc: &DaemonServiceClient) -> Result<Vec<SessionInfo>> {
-    match send(rpc, ClientMessage::ListSessions {}).await? {
-        ServerMessage::ListedSessions { sessions } => Ok(sessions),
-        ServerMessage::Error { error } => {
-            Err(eyre!("Failed to list sessions: {error}"))
-        }
-        other => Err(eyre!(
-            "Unexpected response to ListSessions: {:?}",
-            other
-        )),
-    }
+async fn list_sessions(rpc: &DaemonClient) -> Result<Vec<SessionInfo>> {
+    rpc.list_sessions().await
 }
 
 /// Find a session by name.
-async fn find_session_id(
-    rpc: &DaemonServiceClient,
-    name: &str,
-) -> Result<SessionId> {
+async fn find_session_id(rpc: &DaemonClient, name: &str) -> Result<SessionId> {
     list_sessions(rpc)
         .await?
         .into_iter()
@@ -192,10 +161,7 @@ async fn ensure_daemon_running() -> Result<()> {
 // Command handlers
 // ---------------------------------------------------------------------------
 
-pub async fn handle_run_command(
-    command: String,
-    name: Option<String>,
-) -> Result<()> {
+pub async fn handle_run_command(command: String, name: Option<String>) -> Result<()> {
     ensure_daemon_running().await?;
     let rpc = connect().await?;
 
@@ -210,23 +176,9 @@ pub async fn handle_run_command(
         let absolute_path = fs::canonicalize(&command)
             .map_err(|e| eyre!("Failed to get absolute path for config file: {e}"))?;
 
-        match send(
-            &rpc,
-            ClientMessage::StartSessionFromFile {
-                file_path: absolute_path,
-            },
-        )
-        .await?
-        {
-            ServerMessage::Ok => {
-                println!("Session started successfully from {command}");
-                Ok(())
-            }
-            ServerMessage::Error { error } => {
-                Err(eyre!("Failed to start session from config file: {error}"))
-            }
-            other => Err(eyre!("Unexpected response: {:?}", other)),
-        }
+        rpc.start_session_from_file(absolute_path).await?;
+
+        println!("Session started successfully from {command}");
     } else {
         // Check for duplicate names.
         if let Some(ref name) = name {
@@ -241,33 +193,19 @@ pub async fn handle_run_command(
 
         eprintln!("Starting session: {} (running: {})", name, command);
 
-        match send(
-            &rpc,
-            ClientMessage::CreateSession {
-                working_dir: ".".to_string(),
-                command: Some(command),
-                name: Some(name.clone()),
-            },
-        )
-        .await?
-        {
-            ServerMessage::ListedSessions { sessions } => {
-                let session = sessions
-                    .iter()
-                    .find(|session| session.name == name)
-                    .ok_or_else(|| {
-                        eyre!("Failed to find newly created session in list")
-                    })?;
+        let sessions = rpc
+            .create_session(".".to_string(), Some(command), Some(name.clone()))
+            .await?;
 
-                println!("Session created successfully: {}", session.name);
-                Ok(())
-            }
-            ServerMessage::Error { error } => {
-                Err(eyre!("Failed to create session: {error}"))
-            }
-            other => Err(eyre!("Unexpected response: {:?}", other)),
-        }
+        let session = sessions
+            .iter()
+            .find(|session| session.name == name)
+            .ok_or_else(|| eyre!("Failed to find newly created session in list"))?;
+
+        println!("Session created successfully: {}", session.name);
     }
+
+    Ok(())
 }
 
 /// Starts a systemd-managed session from a config file.
@@ -295,31 +233,14 @@ pub async fn handle_start_sysd(file_path: PathBuf) -> Result<()> {
         absolute_path.display()
     );
 
-    match send(
-        &rpc,
-        ClientMessage::StartSysdSessionFromFile {
-            file_path: absolute_path,
-        },
-    )
-    .await?
-    {
-        ServerMessage::Ok
-        | ServerMessage::UpdatedSession { .. }
-        | ServerMessage::ListedSessions { .. } => {
-            println!(
-                "Systemd session started successfully from {}",
-                file_path.display()
-            );
-            Ok(())
-        }
-        ServerMessage::Error { error } => {
-            Err(eyre!("Failed to start systemd session: {error}"))
-        }
-        other => Err(eyre!(
-            "Unexpected response while starting systemd session: {:?}",
-            other
-        )),
-    }
+    rpc.start_sysd_session_from_file(absolute_path).await?;
+
+    println!(
+        "Systemd session started successfully from {}",
+        file_path.display()
+    );
+
+    Ok(())
 }
 
 /// Stops a systemd-managed session. Does not start the daemon.
@@ -329,21 +250,11 @@ pub async fn handle_stop_sysd(name: String) -> Result<()> {
 
     println!("Stopping systemd session: {name}");
 
-    match send(&rpc, ClientMessage::StopSysdSession { id }).await? {
-        ServerMessage::Ok
-        | ServerMessage::UpdatedSession { .. }
-        | ServerMessage::ListedSessions { .. } => {
-            println!("Systemd session stopped successfully: {name}");
-            Ok(())
-        }
-        ServerMessage::Error { error } => {
-            Err(eyre!("Failed to stop systemd session: {error}"))
-        }
-        other => Err(eyre!(
-            "Unexpected response while stopping systemd session: {:?}",
-            other
-        )),
-    }
+    rpc.stop_sysd_session(id).await?;
+
+    println!("Systemd session stopped successfully: {name}");
+
+    Ok(())
 }
 
 pub async fn handle_list_sessions(names_only: bool) -> Result<()> {
@@ -371,42 +282,28 @@ pub async fn handle_attach_session(name: String) -> Result<()> {
     let rpc = connect().await?;
     let id = find_session_id(&rpc, &name).await?;
 
-    match send(&rpc, ClientMessage::OpenSession { id }).await? {
-        ServerMessage::UpdatedSession { session_info } => {
-            println!(
-                "Attached to session: {} (window with terminal running)",
-                session_info.name
-            );
-            Ok(())
-        }
-        ServerMessage::Error { error } => {
-            Err(eyre!("Failed to attach to session: {error}"))
-        }
-        other => Err(eyre!("Unexpected response: {:?}", other)),
-    }
+    let session_info = rpc.open_session(id).await?;
+
+    println!(
+        "Attached to session: {} (window with terminal running)",
+        session_info.name
+    );
+
+    Ok(())
 }
 
 pub async fn handle_kill_session(name: String) -> Result<()> {
     let rpc = connect().await?;
     let id = find_session_id(&rpc, &name).await?;
 
-    match send(&rpc, ClientMessage::KillSession { id }).await? {
-        ServerMessage::ListedSessions { .. }
-        | ServerMessage::UpdatedSession { .. } => {
-            println!("Killed session: {name}");
-            Ok(())
-        }
-        ServerMessage::Error { error } => {
-            Err(eyre!("Failed to kill session: {error}"))
-        }
-        other => Err(eyre!("Unexpected response: {:?}", other)),
-    }
+    rpc.kill_session(id).await?;
+
+    println!("Killed session: {name}");
+
+    Ok(())
 }
 
-pub async fn handle_export_session(
-    name: String,
-    dir: Option<PathBuf>,
-) -> Result<()> {
+pub async fn handle_export_session(name: String, dir: Option<PathBuf>) -> Result<()> {
     let rpc = connect().await?;
 
     // The daemon has its own working directory, so send an absolute path.
@@ -429,43 +326,21 @@ pub async fn handle_export_session(
 
     let id = find_session_id(&rpc, &name).await?;
 
-    match send(
-        &rpc,
-        ClientMessage::ExportSessionToFile {
-            id,
-            working_dir: export_dir,
-        },
-    )
-    .await?
-    {
-        ServerMessage::ExportedSessionToFile { path } => {
-            println!("Exported session '{}' to {}", name, path.display());
-            Ok(())
-        }
-        ServerMessage::Error { error } => {
-            Err(eyre!("Failed to export session: {error}"))
-        }
-        other => Err(eyre!("Unexpected response while exporting: {:?}", other)),
-    }
+    let path = rpc.export_session_to_file(id, export_dir).await?;
+
+    println!("Exported session '{}' to {}", name, path.display());
+
+    Ok(())
 }
 
 pub async fn handle_export_sysd(name: String) -> Result<()> {
     let rpc = connect().await?;
     let id = find_session_id(&rpc, &name).await?;
 
-    match send(&rpc, ClientMessage::ExportSessionToSysd { id }).await? {
-        ServerMessage::Ok => {
-            println!("Exported session '{}' to systemd", name);
-            Ok(())
-        }
-        ServerMessage::Error { error } => {
-            Err(eyre!("Failed to export session to systemd: {error}"))
-        }
-        other => Err(eyre!(
-            "Unexpected response while exporting to systemd: {:?}",
-            other
-        )),
-    }
+    rpc.export_session_to_sysd(id).await?;
+
+    println!("Exported session '{}' to systemd", name);
+    Ok(())
 }
 
 pub async fn handle_kill_all_sessions() -> Result<()> {
@@ -479,21 +354,8 @@ pub async fn handle_kill_all_sessions() -> Result<()> {
 
     // Wait for every response so that all sessions are actually killed.
     for id in ids {
-        match send(&rpc, ClientMessage::KillSession { id }).await? {
-            ServerMessage::ListedSessions { .. }
-            | ServerMessage::UpdatedSession { .. } => {}
-            ServerMessage::Error { error } => {
-                return Err(eyre!("Failed to kill session: {error}"));
-            }
-            other => {
-                return Err(eyre!(
-                    "Unexpected response while killing session: {:?}",
-                    other
-                ));
-            }
-        }
+        rpc.kill_session(id).await?;
     }
-
     println!("Killed all active sessions");
     Ok(())
 }
@@ -508,7 +370,7 @@ pub async fn handle_kill_daemon() -> Result<()> {
 
     // The daemon exits immediately when processing KillDaemon.
     // A transport error is therefore expected.
-    let _ = send(&rpc, ClientMessage::KillDaemon).await;
+    let _ = rpc.kill_daemon().await;
 
     drop(rpc);
 

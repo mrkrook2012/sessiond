@@ -77,7 +77,7 @@ async fn main() -> Result<()> {
 
                 thread::sleep(Duration::from_millis(1000));
             }
-            crate::frontend::frontend::run_frontend()?;
+            crate::frontend::frontend::run_frontend().await?;
         }
     }
 

@@ -13,7 +13,9 @@ use crate::backend::{
     terminal_manager::TerminalManager, window_manager::WindowManager,
 };
 use crate::ipc::consts::socket_path;
-use crate::ipc::protocol::{ClientMessage, ServerMessage, SessionInfo, SysdAction, SysdData};
+use crate::ipc::protocol::{
+    ClientMessage, ServerMessage, SessionInfo, SysdAction, SysdData, TerminalUpdate,
+};
 use color_eyre::eyre::{Ok, OptionExt, Result, bail, eyre};
 use tokio::sync::Mutex;
 
@@ -42,70 +44,12 @@ impl DaemonManager {
         }
     }
 
-    pub fn get_wanted_data(&mut self) -> ServerMessage {
-        let terminals = self.user_manager.get_all_terminals();
-        let mut terminal_data = Vec::new();
-        for terminal_id in terminals {
-            let data = self.terminal_manager.get_data_from_terminal(terminal_id);
-            terminal_data.push(data);
-        }
-        ServerMessage::TerminalData {
-            terminals: terminal_data,
-        }
+    pub fn get_wanted_data(&mut self, terminal_id: TerminalId) -> TerminalUpdate {
+        self.terminal_manager.get_data_from_terminal(terminal_id)
     }
 
-    pub fn process_message(&mut self, client_message: ClientMessage) -> Result<ServerMessage> {
-        match client_message {
-            ClientMessage::Ping => Ok(ServerMessage::Pong),
-            ClientMessage::Start { rows, cols } => Ok(self.handle_start(rows, cols)),
-            ClientMessage::UpdateScreenSize { rows, cols } => {
-                Ok(self.handle_update_screen_size(rows, cols))
-            }
-            ClientMessage::CreateSession {
-                working_dir,
-                command,
-                name,
-            } => Ok(self.handle_create_session(working_dir, command, name)),
-            ClientMessage::ExitSession => Ok(self.handle_exit_session()),
-            ClientMessage::KillSession { id } => Ok(self.handle_kill_session(id)),
-            ClientMessage::CreateTerminal {
-                //TODO not needed?
-                start_terminal_id: _,
-                working_dir: _,
-                command: _,
-            } => todo!(),
-
-            ClientMessage::KillTerminal { terminal_id, id } => {
-                Ok(self.handle_kill_terminal(id, terminal_id))
-            }
-            ClientMessage::WriteTerminal { terminal_id, data } => {
-                Ok(self.handle_write(terminal_id, data))
-            }
-            ClientMessage::ListSessions {} => Ok(self.handle_list_sessions()),
-            ClientMessage::CreateWindow { id } => Ok(self.handle_create_window(id)),
-            ClientMessage::OpenSession { id } => self.handle_open_session(id),
-            ClientMessage::ChangeWindow { window_id } => Ok(self.handle_change_window(window_id)),
-            ClientMessage::KillWindow { window_id, id } => self.handle_kill_window(id, window_id),
-            ClientMessage::ExportSessionToSysd { id } => self.handle_export_session(id),
-            ClientMessage::StartSessionFromFile { file_path } => {
-                self.handle_start_session_from_file(file_path)
-            }
-            ClientMessage::KillDaemon => self.handle_kill_deamon(),
-            ClientMessage::ExportSessionToFile { id, working_dir } => {
-                self.handle_export_session_to_file(id, working_dir)
-            }
-            ClientMessage::ExecuteSysdActionSession { id, sysd_action } => {
-                self.handle_execute_sysd_action(id, sysd_action)
-            }
-
-            ClientMessage::StartSysdSessionFromFile { file_path } => {
-                self.handle_start_sysd_session_from_file(file_path)
-            }
-            ClientMessage::StopSysdSession { id } => self.handle_stop_sysd_session(id),
-        }
-    }
-
-    fn handle_stop_sysd_session(&mut self, id: SessionId) -> Result<ServerMessage> {
+    // TODO Remove the old ServerMessage, replace with fitting return type
+    pub fn handle_stop_sysd_session(&mut self, id: SessionId) -> Result<()> {
         // Find the current session,
         // Remove all windows,
         // Kill all terminals
@@ -140,14 +84,14 @@ impl DaemonManager {
             self.window_manager.kill_window(*window_id);
         }
 
-        Ok(ServerMessage::Ok)
+        Ok(())
     }
 
-    fn handle_execute_sysd_action(
+    pub fn handle_execute_sysd_action(
         &mut self,
         id: SessionId,
         sysd_action: SysdAction,
-    ) -> Result<ServerMessage> {
+    ) -> Result<Vec<SessionInfo>> {
         // These should trigger the sysd command,
         // This will cause the execution of start/stop-sysd, which will actually change the state
         // Enabling/disablng will be done here, as they don't actually affect the session
@@ -174,12 +118,10 @@ impl DaemonManager {
             }
         }
 
-        Ok(ServerMessage::ListedSessions {
-            sessions: self.get_all_session_info(),
-        })
+        Ok(self.get_all_session_info())
     }
 
-    fn handle_start_sysd_session_from_file(&mut self, file_path: PathBuf) -> Result<ServerMessage> {
+    pub fn handle_start_sysd_session_from_file(&mut self, file_path: PathBuf) -> Result<()> {
         println!("Got file");
         let input = std::fs::read_to_string(file_path)?;
         let session_yaml: YamlSession = serde_yaml::from_str(&input)?;
@@ -204,14 +146,14 @@ impl DaemonManager {
         }
 
         self.session_manager.create_sysd_session(name, windows);
-        Ok(ServerMessage::Ok)
+        Ok(())
     }
 
-    fn handle_export_session_to_file(
+    pub fn handle_export_session_to_file(
         &self,
         id: SessionId,
         mut path: PathBuf,
-    ) -> Result<ServerMessage> {
+    ) -> Result<PathBuf> {
         let session = self.get_session_info_by_id(id);
         let name = session.name;
         let yaml = self.get_session_yaml(id)?;
@@ -219,11 +161,11 @@ impl DaemonManager {
         path.push(name);
         path.add_extension("yaml");
         fs::write(path.as_path(), yaml)?;
-        Ok(ServerMessage::ExportedSessionToFile { path })
+        Ok(path)
     }
 
     // TODO think about working directories and storing files
-    fn handle_start_session_from_file(&mut self, file_path: PathBuf) -> Result<ServerMessage> {
+    pub fn handle_start_session_from_file(&mut self, file_path: PathBuf) -> Result<()> {
         println!("Got file");
         let input = std::fs::read_to_string(file_path)?;
         let session_yaml: YamlSession = serde_yaml::from_str(&input)?;
@@ -248,10 +190,10 @@ impl DaemonManager {
 
         self.session_manager
             .create_ephem_session(windows, session_yaml.name);
-        Ok(ServerMessage::Ok)
+        Ok(())
     }
 
-    fn handle_export_session(&mut self, id: SessionId) -> Result<ServerMessage> {
+    pub fn handle_export_session(&mut self, id: SessionId) -> Result<()> {
         // Create .yaml for starting
         // Store .yaml in ~/.local/share/{daemon_test}/{name}.service
         // Generate sysd file pointing to .yaml
@@ -277,10 +219,10 @@ impl DaemonManager {
             }
         });
 
-        Ok(ServerMessage::Ok)
+        Ok(())
     }
 
-    fn get_session_yaml(&self, id: SessionId) -> Result<String> {
+    pub fn get_session_yaml(&self, id: SessionId) -> Result<String> {
         let session = self
             .session_manager
             .get_session_by_id(id)
@@ -316,39 +258,41 @@ impl DaemonManager {
         Ok(serde_yaml::to_string(&yaml_session)?)
     }
 
-    fn handle_change_window(&mut self, window_id: WindowId) -> ServerMessage {
+    pub fn handle_change_window(&mut self, window_id: WindowId) {
         self.user_manager.clear_all();
         let terminal_id = self
             .window_manager
             .get_terminal_id_from_window_id(&window_id);
         self.user_manager.add_terminal(terminal_id);
-        ServerMessage::Ok
     }
 
-    fn handle_update_screen_size(&mut self, rows: u16, cols: u16) -> ServerMessage {
+    pub fn handle_update_screen_size(&mut self, rows: u16, cols: u16) {
         self.user_manager.update_dimensions(rows, cols);
         self.terminal_manager.resize_all_terminals(rows, cols);
-        ServerMessage::Ok
     }
 
     // TODO Remove
-    fn handle_kill_terminal(&mut self, id: SessionId, terminal_id: TerminalId) -> ServerMessage {
-        // Unsub from terminal
-        // Kill terminal
-        // Check window terminal count, if 1 kill window, else rm window from tree
-        // check window count in session, if zero kill session
-        let window_id = self
-            .window_manager
-            .get_window_id_from_terminal(terminal_id)
-            .unwrap();
+    // pub fn handle_kill_terminal(
+    //     &mut self,
+    //     id: SessionId,
+    //     terminal_id: TerminalId,
+    // ) -> ServerMessage {
+    //     // Unsub from terminal
+    //     // Kill terminal
+    //     // Check window terminal count, if 1 kill window, else rm window from tree
+    //     // check window count in session, if zero kill session
+    //     let window_id = self
+    //         .window_manager
+    //         .get_window_id_from_terminal(terminal_id)
+    //         .unwrap();
 
-        ServerMessage::UpdatedSession {
-            session_info: self.get_session_info_by_id(id),
-        }
-    }
+    //     ServerMessage::UpdatedSession {
+    //         session_info: self.get_session_info_by_id(id),
+    //     }
+    // }
 
     // TODO find a more robust solution
-    fn handle_kill_session(&mut self, id: SessionId) -> ServerMessage {
+    pub fn handle_kill_session(&mut self, id: SessionId) -> Vec<SessionInfo> {
         // This command will only be given from the list selection
         let mut terminal_ids: Vec<TerminalId> = Vec::new();
         let windows = self
@@ -368,11 +312,14 @@ impl DaemonManager {
             self.user_manager.remove_terminal(terminal_id);
         }
         self.session_manager.kill_session(id);
-        let sessions = self.get_all_session_info();
-        ServerMessage::ListedSessions { sessions }
+        self.get_all_session_info()
     }
 
-    fn handle_kill_window(&mut self, id: SessionId, window_id: WindowId) -> Result<ServerMessage> {
+    pub fn handle_kill_window(
+        &mut self,
+        id: SessionId,
+        window_id: WindowId,
+    ) -> Result<SessionInfo> {
         let terminal_id = self
             .window_manager
             .get_terminal_id_from_window_id(&window_id);
@@ -392,17 +339,12 @@ impl DaemonManager {
         if remaining.len() == 0 {
             //TODO This is ass,
             self.session_manager.kill_session(id);
-            return Ok(ServerMessage::ListedSessions {
-                sessions: self.get_all_session_info(),
-            });
         }
 
-        Ok(ServerMessage::UpdatedSession {
-            session_info: self.get_session_info_by_id(id),
-        })
+        Ok(self.get_session_info_by_id(id))
     }
 
-    fn handle_create_window(&mut self, id: SessionId) -> ServerMessage {
+    pub fn handle_create_window(&mut self, id: SessionId) -> SessionInfo {
         // Create new terminal
         // Add new terminal to window manager
         // Switch to new window
@@ -414,18 +356,16 @@ impl DaemonManager {
             .unwrap();
         self.user_manager.clear_all();
         self.user_manager.add_terminal(terminal_id);
-        ServerMessage::UpdatedSession {
-            session_info: self.get_session_info_by_id(id),
-        }
+        self.get_session_info_by_id(id)
     }
 
-    fn handle_exit_session(&mut self) -> ServerMessage {
+    pub fn handle_exit_session(&mut self) -> Vec<SessionInfo> {
         // Exiting is just stopping sending.
         self.user_manager.clear_all();
-        ServerMessage::Ok
+        self.get_all_session_info()
     }
 
-    fn handle_open_session(&mut self, id: SessionId) -> Result<ServerMessage> {
+    pub fn handle_open_session(&mut self, id: SessionId) -> Result<SessionInfo> {
         // Get sessions
         // Get first window in session
         // get terminals in first window
@@ -450,27 +390,25 @@ impl DaemonManager {
             .into_iter()
             .find(|info| info.id == id)
             .ok_or_else(|| color_eyre::eyre::eyre!("Session info not found"))?;
-        Ok(ServerMessage::UpdatedSession { session_info })
+        Ok(session_info)
     }
 
-    fn handle_start(&mut self, rows: u16, cols: u16) -> ServerMessage {
+    pub fn handle_start(&mut self, rows: u16, cols: u16) {
         // Add user information
         self.user_manager.add_user(rows, cols);
-        crate::ipc::protocol::ServerMessage::Ok
     }
 
-    fn handle_write(&mut self, terminal_id: TerminalId, data: Vec<u8>) -> ServerMessage {
+    pub fn handle_write(&mut self, terminal_id: TerminalId, data: Vec<u8>) {
         self.terminal_manager
             .send_bytes_to_terminal(terminal_id, data.as_slice());
-        ServerMessage::Ok
     }
 
-    fn handle_create_session(
+    pub fn handle_create_session(
         &mut self,
         working_dir: String,
         command: Option<String>,
         name: Option<String>,
-    ) -> ServerMessage {
+    ) -> Vec<SessionInfo> {
         // Create terminal
         // Create window for terminal
         // Create Session with window
@@ -490,12 +428,10 @@ impl DaemonManager {
             .session_manager
             .create_ephem_session(vec![window_id], name.clone());
 
-        ServerMessage::ListedSessions {
-            sessions: self.get_all_session_info(),
-        }
+        self.get_all_session_info()
     }
 
-    fn get_all_session_info(&self) -> Vec<SessionInfo> {
+    pub fn get_all_session_info(&self) -> Vec<SessionInfo> {
         self.session_manager
             .list_sessions()
             .iter()
@@ -544,13 +480,11 @@ impl DaemonManager {
         )
     }
 
-    fn handle_list_sessions(&self) -> ServerMessage {
-        ServerMessage::ListedSessions {
-            sessions: self.get_all_session_info(),
-        }
+    pub fn handle_list_sessions(&self) -> Vec<SessionInfo> {
+        self.get_all_session_info()        
     }
 
-    fn handle_kill_deamon(&self) -> ! {
+    pub fn handle_kill_deamon(&self) -> ! {
         std::fs::remove_file(socket_path()).unwrap();
         std::process::exit(0);
     }

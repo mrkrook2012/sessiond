@@ -5,3 +5,4 @@ frontend.log
 daemon.err
 frontend_recv_thread.out
 template.yaml
+frontend_worker.log

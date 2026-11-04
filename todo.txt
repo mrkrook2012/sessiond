@@ -4,16 +4,15 @@ todo:
   - Add tests for file stuff V
   - Add basic systemd integration V
   - Clean up Async work / networking V 
-  - Add RequestId to IPC solution
+  - digits move screen only when ctrl b 
   - Add adding stale sysd services
   - Add daemon based duplicate name rejection
   - Add removing stale sysd services 
   - Add event based sysd status tracking
   - make CI/CD pipeline V
-  - Add Request ids to Servermessages
   - Finalize systemd integration
   - Fish hints integration
-  - Clean up CLI 
+  - Clean up CLI V
   - Create ValidSessionId type ?
   - Clean logging
   - Think of an actual name
