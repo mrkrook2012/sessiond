@@ -195,11 +195,16 @@ impl DaemonManager {
 
     pub fn handle_export_session(&mut self, id: SessionId) -> Result<()> {
         // Create .yaml for starting
+        // Kill original session
         // Store .yaml in ~/.local/share/{daemon_test}/{name}.service
         // Generate sysd file pointing to .yaml
         // Profit?
         let yaml = self.get_session_yaml(id)?;
         let name = self.get_session_info_by_id(id).name;
+
+        // Kill original session
+        self.handle_kill_session(id);
+
         let home = std::env::var("HOME")?;
         let path_to_yaml_file = PathBuf::from(home)
             .join(".local/share/daemon_test")
@@ -431,6 +436,51 @@ impl DaemonManager {
         self.get_all_session_info()
     }
 
+    pub fn handle_create_sysd_session(
+        &mut self,
+        working_dir: String,
+        command: Option<String>,
+        name: Option<String>,
+    ) -> Vec<SessionInfo> {
+        let name = name.unwrap_or_else(|| "penar".to_string());
+
+        // Create terminal
+        let (rows, cols) = self.user_manager.get_dimensions();
+        let terminal_id = self.terminal_manager.create_terminal(rows, cols);
+
+        // Set working directory
+        self.terminal_manager
+            .execute_command_on_terminal(terminal_id, format!("cd {working_dir} && clear"));
+
+        // Execute optional command
+        if let Some(command) = command {
+            self.terminal_manager
+                .execute_command_on_terminal(terminal_id, command);
+        }
+
+        // Create window
+        let window_id = self.window_manager.create_window(terminal_id);
+
+        // Create systemd-backed session
+        let unit_name = UnitName::new(&name).expect("Invalid systemd unit name");
+
+        let session_id = self
+            .session_manager
+            .create_sysd_session(unit_name, vec![window_id]);
+
+        // Export session YAML and generate systemd service
+        let home = std::env::var("HOME").expect("HOME environment variable not set");
+
+        let session_dir = PathBuf::from(home).join(".local/share/daemon_test");
+
+        fs::create_dir_all(&session_dir).expect("Failed to create session directory");
+
+        self.handle_export_session(session_id)
+            .expect("Failed to export systemd session");
+
+        self.get_all_session_info()
+    }
+
     pub fn get_all_session_info(&self) -> Vec<SessionInfo> {
         self.session_manager
             .list_sessions()
@@ -481,7 +531,7 @@ impl DaemonManager {
     }
 
     pub fn handle_list_sessions(&self) -> Vec<SessionInfo> {
-        self.get_all_session_info()        
+        self.get_all_session_info()
     }
 
     pub fn handle_kill_deamon(&self) -> ! {

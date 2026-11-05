@@ -15,7 +15,9 @@ async fn main() -> Result<()> {
     let cli = cli::Cli::parse();
 
     match cli.command {
-        Some(cli::Commands::StartDaemon) => {
+        Some(cli::Commands::Daemon {
+            action: cli::DaemonCommands::Start,
+        }) => {
             // Clean up any stale socket file
             let _ = fs::remove_file("/tmp/daemon_test.sock");
             let result = crate::backend::deamon::run_daemon().await;
@@ -29,31 +31,8 @@ async fn main() -> Result<()> {
             }
             return Ok(());
         }
-        Some(cli::Commands::Run { command, name }) => {
-            cli::handle_run_command(command, name).await?;
-        }
-        Some(cli::Commands::List { names }) => cli::handle_list_sessions(names).await?,
-        Some(cli::Commands::Status) => cli::handle_status(),
-        Some(cli::Commands::Attach { name }) => {
-            cli::handle_attach_session(name).await?;
-        }
-        Some(cli::Commands::StartSysd { file_path }) => {
-            cli::handle_start_sysd(file_path).await?;
-        }
-        Some(cli::Commands::StopSysd { name }) => {
-            cli::handle_stop_sysd(name).await?;
-        }
-        Some(cli::Commands::Kill { name }) => {
-            cli::handle_kill_session(name).await?;
-        }
-        Some(cli::Commands::KillAll) => {
-            cli::handle_kill_all_sessions().await?;
-        }
-        Some(cli::Commands::KillDaemon) => {
-            cli::handle_kill_daemon().await?;
-        }
-        Some(cli::Commands::Export { name, dir }) => cli::handle_export_session(name, dir).await?,
-        Some(cli::Commands::ExportSysd { name }) => cli::handle_export_sysd(name).await?,
+        // Every other subcommand is handled by the cli module.
+        Some(command) => cli::dispatch(command).await?,
         None => {
             // Original behavior: start daemon if not running, then run frontend
             if fs::metadata("/tmp/daemon_test.sock").is_err() {
@@ -61,7 +40,7 @@ async fn main() -> Result<()> {
                 let stdout = File::create("./daemon.out").unwrap();
                 let stderr = File::create("./daemon.err").unwrap();
                 let result = Command::new(std::env::current_exe().unwrap())
-                    .arg("start-daemon")
+                    .args(["daemon", "start"])
                     .stdout(stdout)
                     .stderr(stderr)
                     .spawn();

@@ -4,7 +4,9 @@ todo:
   - Add tests for file stuff V
   - Add basic systemd integration V
   - Clean up Async work / networking V 
-  - digits move screen only when ctrl b 
+  - Add order to cli command structure 
+  - Digits move screen only when ctrl b 
+
   - Add adding stale sysd services
   - Add daemon based duplicate name rejection
   - Add removing stale sysd services 
@@ -13,7 +15,6 @@ todo:
   - Finalize systemd integration
   - Fish hints integration
   - Clean up CLI V
-  - Create ValidSessionId type ?
   - Clean logging
   - Think of an actual name
   - Simple .deb release pipeline
@@ -38,3 +39,34 @@ the initializion of the session will be plugged into the load feature of sysd.
 The Stop is never sent when stopping or when restarting due to the service type being a oneshot that is supposed to exit 
 This means that we only get start messages
 temp solution is when starting an already started sysd session, we restart <- incorrect
+
+
+Cli sketch
+myapp run <command> [args...] // Creates new session
+myapp run --systemd <command> [args...] // Creates new sysd service running that command
+
+// General commands
+myapp list
+myapp attach <name>
+myapp kill <name>
+myapp kill --all
+
+// Only for sysd based
+myapp service start <name>
+myapp service stop <name>
+myapp service restart <name>
+myapp service enable <name>
+myapp service disable <name>
+
+// Should only work for ephemoral sessions
+myapp export <name>
+myapp import <file>
+
+// Commands to check on daemon
+myapp daemon start
+myapp daemon stop
+myapp daemon status
+
+// Internal commands used in sysd
+myapp __internal-systemd-start <config yaml path>
+myapp __internal-systemd-stop <name>

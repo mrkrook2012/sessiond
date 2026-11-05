@@ -30,6 +30,7 @@ impl Harness {
 
     fn assert_daemon_healthy(&self, step: &str) {
         let err = fs::read_to_string(self.dir.path().join("daemon.err")).unwrap_or_default();
+
         assert!(
             !err.contains("panicked"),
             "daemon panicked after '{step}':\n{err}"
@@ -39,12 +40,14 @@ impl Harness {
     /// Runs the CLI, asserts success, returns stdout.
     fn ok(&self, args: &[&str]) -> String {
         let out = self.raw(args);
+
         assert!(
             out.status.success(),
             "`{}` failed: {}",
             args.join(" "),
             String::from_utf8_lossy(&out.stderr)
         );
+
         self.assert_daemon_healthy(&args.join(" "));
         String::from_utf8_lossy(&out.stdout).into_owned()
     }
@@ -52,11 +55,13 @@ impl Harness {
     /// Runs the CLI, asserts failure, returns stderr.
     fn fails(&self, args: &[&str]) -> String {
         let out = self.raw(args);
+
         assert!(
             !out.status.success(),
             "`{}` unexpectedly succeeded",
             args.join(" ")
         );
+
         self.assert_daemon_healthy(&args.join(" "));
         String::from_utf8_lossy(&out.stderr).into_owned()
     }
@@ -71,6 +76,7 @@ impl Harness {
     /// Exports a session into `dir` and returns (path, file contents).
     fn export(&self, name: &str, dir: &Path) -> (PathBuf, String) {
         fs::create_dir_all(dir).unwrap();
+
         self.ok(&["export", name, "--dir", dir.to_str().unwrap()]);
 
         // Find the exported file instead of parsing stdout.
@@ -79,29 +85,38 @@ impl Harness {
             .map(|e| e.unwrap().path())
             .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("yaml"))
             .collect();
+
         assert_eq!(
             files.len(),
             1,
             "expected exactly one yaml in {dir:?}, got {files:?}"
         );
+
         let path = files.remove(0);
         let contents = fs::read_to_string(&path).unwrap();
+
         (path, contents)
     }
 }
 
 impl Drop for Harness {
     fn drop(&mut self) {
-        let _ = self.raw(&["kill-daemon"]);
+        let _ = self.raw(&["daemon", "stop"]);
     }
 }
 
+// ---------------------------------------------------------------------------
+// Session lifecycle
+// ---------------------------------------------------------------------------
+
 #[test]
-fn lifecycle_run_list_kill() {
+fn lifecycle_run_list_attach_kill() {
     let h = Harness::new();
 
-    h.ok(&["run", "sleep 10", "--name", "alpha"]);
+    h.ok(&["run", "--name", "alpha", "sleep", "10"]);
     assert_eq!(h.sessions(), vec!["alpha"]);
+
+    h.ok(&["attach", "alpha"]);
 
     h.ok(&["kill", "alpha"]);
     assert!(h.sessions().is_empty());
@@ -111,7 +126,8 @@ fn lifecycle_run_list_kill() {
 fn run_without_name_gets_a_generated_name() {
     let h = Harness::new();
 
-    h.ok(&["run", "sleep 10"]);
+    h.ok(&["run", "sleep", "10"]);
+
     assert_eq!(h.sessions().len(), 1);
 }
 
@@ -119,13 +135,16 @@ fn run_without_name_gets_a_generated_name() {
 fn multiple_sessions_and_kill_all() {
     let h = Harness::new();
 
-    h.ok(&["run", "sleep 10", "-n", "one"]);
-    h.ok(&["run", "sleep 10", "-n", "two"]);
+    h.ok(&["run", "-n", "one", "sleep", "10"]);
+    h.ok(&["run", "-n", "two", "sleep", "10"]);
+
     let mut names = h.sessions();
     names.sort();
+
     assert_eq!(names, vec!["one", "two"]);
 
-    h.ok(&["kill-all"]);
+    h.ok(&["kill", "--all"]);
+
     assert!(h.sessions().is_empty());
 }
 
@@ -133,72 +152,190 @@ fn multiple_sessions_and_kill_all() {
 fn killing_unknown_session_fails() {
     let h = Harness::new();
 
-    h.ok(&["run", "sleep 10", "-n", "real"]);
+    h.ok(&["run", "-n", "real", "sleep", "10"]);
+
     let err = h.fails(&["kill", "does-not-exist"]);
+
     assert!(err.contains("Session not found"), "got: {err}");
-    assert_eq!(h.sessions(), vec!["real"]); // untouched
+
+    assert_eq!(h.sessions(), vec!["real"]);
 }
+
+#[test]
+fn duplicate_session_name_is_rejected() {
+    let h = Harness::new();
+
+    h.ok(&["run", "-n", "dup", "sleep", "10"]);
+
+    let err = h.fails(&["run", "-n", "dup", "sleep", "10"]);
+
+    assert!(err.contains("already exists"), "got: {err}");
+
+    assert_eq!(h.sessions(), vec!["dup"]);
+}
+
+// ---------------------------------------------------------------------------
+// Daemon lifecycle
+// ---------------------------------------------------------------------------
 
 #[test]
 fn commands_fail_cleanly_when_daemon_is_down() {
     let h = Harness::new();
 
     let err = h.fails(&["list"]);
+
     assert!(err.contains("Daemon not running"), "got: {err}");
 }
 
 #[test]
-fn kill_daemon_stops_it() {
+fn daemon_starts_automatically_when_running_a_session() {
     let h = Harness::new();
 
-    h.ok(&["run", "sleep 10", "-n", "x"]);
-    h.ok(&["kill-daemon"]);
+    // Starting a session should automatically start the daemon.
+    h.ok(&["run", "-n", "auto", "sleep", "10"]);
+
+    h.ok(&["daemon", "status"]);
+
+    assert_eq!(h.sessions(), vec!["auto"]);
+}
+
+#[test]
+fn daemon_status_reports_running_and_stopped() {
+    let h = Harness::new();
+
+    // Initially stopped.
+    h.fails(&["daemon", "status"]);
+
+    // Running a session starts the daemon.
+    h.ok(&["run", "sleep", "10"]);
+
+    h.ok(&["daemon", "status"]);
+
+    // Stop the daemon.
+    h.ok(&["daemon", "stop"]);
+
+    // Status should now return exit code 1.
+    h.fails(&["daemon", "status"]);
+}
+
+#[test]
+fn daemon_stop_stops_it() {
+    let h = Harness::new();
+
+    h.ok(&["run", "-n", "x", "sleep", "10"]);
+
+    h.ok(&["daemon", "stop"]);
+
     h.fails(&["list"]);
 }
 
 #[test]
-fn export_and_restore_session_roundtrip() {
+fn stopping_an_already_stopped_daemon_succeeds() {
     let h = Harness::new();
+
+    h.ok(&["daemon", "stop"]);
+
+    h.fails(&["daemon", "status"]);
+}
+
+// ---------------------------------------------------------------------------
+// Systemd sessions and service commands
+// ---------------------------------------------------------------------------
+
+#[test]
+fn service_commands_reject_ephemeral_sessions() {
+    let h = Harness::new();
+
+    h.ok(&["run", "-n", "ephemeral", "sleep", "300"]);
+
+    // Systemd actions must not work on ordinary ephemeral sessions.
+    h.fails(&["service", "start", "ephemeral"]);
+    h.fails(&["service", "stop", "ephemeral"]);
+    h.fails(&["service", "restart", "ephemeral"]);
+    h.fails(&["service", "enable", "ephemeral"]);
+    h.fails(&["service", "disable", "ephemeral"]);
+
+    // The failed operations must not have killed the session.
+    assert_eq!(h.sessions(), vec!["ephemeral"]);
+}
+
+// ---------------------------------------------------------------------------
+// Export / import
+// ---------------------------------------------------------------------------
+
+#[test]
+fn export_and_import_session_roundtrip() {
+    let h = Harness::new();
+
     let export_dir_1 = h.dir.path().join("export1");
     let export_dir_2 = h.dir.path().join("export2");
 
-    // 1. Named session running a command
-    h.ok(&["run", "sleep 300", "--name", "roundtrip"]);
+    // 1. Start a named ephemeral session.
+    h.ok(&["run", "--name", "roundtrip", "sleep", "300"]);
+
     assert_eq!(h.sessions(), vec!["roundtrip"]);
 
-    // 2. Export it
+    // 2. Export it to disk.
     let (yaml_path, yaml_1) = h.export("roundtrip", &export_dir_1);
+
     assert!(
         yaml_1.contains("roundtrip"),
         "name missing from yaml:\n{yaml_1}"
     );
+
     assert!(
         yaml_1.contains("sleep 300"),
         "command missing from yaml:\n{yaml_1}"
     );
 
-    // 3. Kill the original so the restored one is the only one
+    assert!(yaml_path.is_file());
+
+    // 3. Kill the original session.
     h.ok(&["kill", "roundtrip"]);
+
     assert!(h.sessions().is_empty());
 
-    // 4. Start the same session from the file
-    h.ok(&["run", yaml_path.to_str().unwrap()]);
+    // 4. Import the exported YAML.
+    h.ok(&["import", yaml_path.to_str().unwrap()]);
+
     assert_eq!(h.sessions(), vec!["roundtrip"]);
 
-    // 5. Same info: re-exporting the restored session must give identical yaml
+    // 5. Export again and verify the configuration is identical.
     let (_, yaml_2) = h.export("roundtrip", &export_dir_2);
-    assert_eq!(yaml_1, yaml_2, "restored session differs from the original");
 
-    // 6. Kill it; every `ok` call already checked daemon.err for panics
+    assert_eq!(yaml_1, yaml_2, "imported session differs from the original");
+
+    // 6. Clean up.
     h.ok(&["kill", "roundtrip"]);
+
     assert!(h.sessions().is_empty());
+
     h.assert_daemon_healthy("end of roundtrip test");
 }
 
-// Enable once the daemon enforces unique names:
+#[test]
+fn importing_nonexistent_file_fails() {
+    let h = Harness::new();
+
+    let missing = h.dir.path().join("does-not-exist.yaml");
+
+    let err = h.fails(&["import", missing.to_str().unwrap()]);
+
+    assert!(err.contains("Failed to get absolute path"), "got: {err}");
+}
+
 // #[test]
-// fn duplicate_session_name_is_rejected() {
+// fn export_unknown_session_fails() {
 //     let h = Harness::new();
-//     h.ok(&["run", "sleep 10", "-n", "dup"]);
-//     h.fails(&["run", "sleep 10", "-n", "dup"]);
+
+//     let export_dir = h.dir.path().join("export");
+
+//     let err = h.fails(&[
+//         "export",
+//         "does-not-exist",
+//         "--dir",
+//         export_dir.to_str().unwrap(),
+//     ]);
+
+//     assert!(err.contains("Session not found"), "got: {err}");
 // }

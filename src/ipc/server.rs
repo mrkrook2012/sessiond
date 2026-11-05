@@ -59,6 +59,17 @@ impl DaemonService for DaemonRpcServer {
         manager.handle_create_session(working_dir, command, name)
     }
 
+    async fn create_sysd_session(
+        self,
+        _: context::Context,
+        working_dir: String,
+        command: Option<String>,
+        name: Option<String>,
+    ) -> Vec<SessionInfo> {
+        let mut manager = self.manager.lock().await;
+        manager.handle_create_sysd_session(working_dir, command, name)
+    }
+
     async fn exit_session(self, _: context::Context) -> Vec<SessionInfo> {
         let mut manager = self.manager.lock().await;
         manager.handle_exit_session()

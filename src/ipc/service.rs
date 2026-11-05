@@ -23,6 +23,13 @@ pub trait DaemonService {
         name: Option<String>,
     ) -> Vec<SessionInfo>;
 
+    /// Create a new systemd-backed session.
+    async fn create_sysd_session(
+        working_dir: String,
+        command: Option<String>,
+        name: Option<String>,
+    ) -> Vec<SessionInfo>;
+
     /// Stop sending terminal updates for the current session.
     async fn exit_session() -> Vec<SessionInfo>;
 

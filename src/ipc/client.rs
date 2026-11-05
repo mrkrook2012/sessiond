@@ -95,6 +95,17 @@ impl DaemonClient {
         .await
     }
 
+    pub async fn create_sysd_session(
+        &self,
+        working_dir: String,
+        command: Option<String>,
+        name: Option<String>,
+    ) -> Result<Vec<SessionInfo>, tarpc::client::RpcError> {
+        self.client
+            .create_sysd_session(context::current(), working_dir, command, name)
+            .await
+    }
+
     pub async fn exit_session(&self) -> Result<Vec<SessionInfo>> {
         self.rpc_call(self.client.exit_session(context::current()))
             .await

@@ -22,8 +22,11 @@ impl SystemdManager {
             .to_str()
             .unwrap()
             .to_owned();
-        let start_command = format!("{bin_path} start-sysd {:?}", path_to_config_file.as_path());
-        let stop_command = format!("{bin_path} stop-sysd {:?}", name.to_string());
+        let start_command = format!(
+            "{bin_path} __internal-systemd-start {:?}",
+            path_to_config_file.as_path()
+        );
+        let stop_command = format!("{bin_path} __internal-systemd-stop {:?}", name.to_string());
 
         let file_contents = Self::get_filled_template(
             &user,
