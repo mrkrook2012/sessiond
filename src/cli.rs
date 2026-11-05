@@ -48,6 +48,7 @@ pub enum Commands {
         #[arg(long)]
         names: bool,
     },
+    // TODO Fix this
     /// Attaches to an existing session by name
     Attach { name: String },
     /// Kills a session by name, or all sessions with --all
@@ -272,7 +273,11 @@ async fn handle_run(systemd: bool, name: Option<String>, command: Vec<String>) -
     // The daemon has its own working directory, so send ours explicitly.
     let working_dir = std::env::current_dir()?.to_string_lossy().into_owned();
 
-    let kind = if systemd { "systemd service" } else { "session" };
+    let kind = if systemd {
+        "systemd service"
+    } else {
+        "session"
+    };
     eprintln!("Starting {kind}: {name} (running: {command})");
 
     let sessions = if systemd {

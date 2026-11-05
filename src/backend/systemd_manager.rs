@@ -22,6 +22,10 @@ impl SystemdManager {
             .to_str()
             .unwrap()
             .to_owned();
+
+        if bin_path.contains("(deleted)") {
+            panic!("Binary location has been deleted???")
+        }
         let start_command = format!(
             "{bin_path} __internal-systemd-start {:?}",
             path_to_config_file.as_path()
@@ -53,15 +57,15 @@ impl SystemdManager {
         After=network.target
 
         [Service]
-        Type=simple
+        Type=oneshot
+        RemainAfterExit=yes
         User={user}
         WorkingDirectory={work_dir}
 
         ExecStart={start_command} 
-        ExecStop={stop_commannd}
+        ExecStop={stop_command}
 
         Restart={restart_policy}
-        RestartSec=10
 
         [Install]
         WantedBy=multi-user.target

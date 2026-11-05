@@ -4,12 +4,15 @@ todo:
   - Add tests for file stuff V
   - Add basic systemd integration V
   - Clean up Async work / networking V 
-  - Add order to cli command structure 
-  - Digits move screen only when ctrl b 
+  - Add order to cli command structure V
+  - Add removing stale sysd services 
 
+  - Fix ctrl in terminal to skip words
+  - Fix btop in terminal
+  - Add scrollback to terminals
+  
   - Add adding stale sysd services
   - Add daemon based duplicate name rejection
-  - Add removing stale sysd services 
   - Add event based sysd status tracking
   - make CI/CD pipeline V
   - Finalize systemd integration

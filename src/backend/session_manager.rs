@@ -19,7 +19,21 @@ use crate::{
     ipc::protocol::SysdData,
 };
 
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, AssignOps, Encode, Decode, Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    AssignOps,
+    Encode,
+    Decode,
+    Serialize,
+    serde::Deserialize,
+)]
 pub struct SessionId(pub u64);
 
 pub struct SessionManager {
@@ -59,9 +73,7 @@ impl SessionManager {
 
         match &mut session.kind {
             SessionKind::Ephemoral { windows: _ } => bail!("Tried to start a non sysd session"),
-            SessionKind::SysdBased(sysd_session) => {
-                sysd_session.state = SessionState::Stopped
-            }
+            SessionKind::SysdBased(sysd_session) => sysd_session.state = SessionState::Stopped,
         }
         Ok(())
     }
@@ -203,7 +215,7 @@ impl SysdSession {
         Command::new("systemctl")
             .arg("--user")
             .arg("start")
-            .arg(format!("{}", self.name.to_string()))
+            .arg(format!("{}.service", self.name.to_string()))
             .output()
             .unwrap();
     }
@@ -212,7 +224,7 @@ impl SysdSession {
         Command::new("systemctl")
             .arg("--user")
             .arg("start")
-            .arg(format!("{}", self.name.to_string()))
+            .arg(format!("{}.service", self.name.to_string()))
             .output()
             .unwrap();
     }
@@ -220,7 +232,7 @@ impl SysdSession {
         Command::new("systemctl")
             .arg("--user")
             .arg("restart")
-            .arg(format!("{}", self.name.to_string()))
+            .arg(format!("{}.service", self.name.to_string()))
             .output()
             .unwrap();
     }
@@ -229,7 +241,7 @@ impl SysdSession {
         Command::new("systemctl")
             .arg("--user")
             .arg("enable")
-            .arg(format!("{}", self.name.to_string()))
+            .arg(format!("{}.service", self.name.to_string()))
             .output()
             .unwrap();
         self.enabled = true;

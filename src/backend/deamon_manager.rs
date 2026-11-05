@@ -2,6 +2,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
+use std::thread::sleep_ms;
+use std::time::Duration;
 
 use crate::backend::session_manager::{SessionId, SessionKind, UnitName};
 use crate::backend::systemd_service_manager::SystemdServiceManager;
@@ -195,7 +197,6 @@ impl DaemonManager {
 
     pub fn handle_export_session(&mut self, id: SessionId) -> Result<()> {
         // Create .yaml for starting
-        // Kill original session
         // Store .yaml in ~/.local/share/{daemon_test}/{name}.service
         // Generate sysd file pointing to .yaml
         // Profit?
@@ -442,6 +443,9 @@ impl DaemonManager {
         command: Option<String>,
         name: Option<String>,
     ) -> Vec<SessionInfo> {
+        // TODO THIS FUNCTION NEEDS TO DIE
+        todo!();
+        println!("Got reqeust to make new sysd service");
         let name = name.unwrap_or_else(|| "penar".to_string());
 
         // Create terminal
@@ -463,10 +467,12 @@ impl DaemonManager {
 
         // Create systemd-backed session
         let unit_name = UnitName::new(&name).expect("Invalid systemd unit name");
-
-        let session_id = self
+        println!("Creating ephemoral session");
+        let ephem_session_id = self
             .session_manager
-            .create_sysd_session(unit_name, vec![window_id]);
+            .create_ephem_session(vec![window_id], unit_name.to_string());
+
+        std::thread::sleep(Duration::from_millis(1000));
 
         // Export session YAML and generate systemd service
         let home = std::env::var("HOME").expect("HOME environment variable not set");
@@ -475,8 +481,11 @@ impl DaemonManager {
 
         fs::create_dir_all(&session_dir).expect("Failed to create session directory");
 
-        self.handle_export_session(session_id)
+        println!("exporting ephemoral session");
+        self.handle_export_session(ephem_session_id)
             .expect("Failed to export systemd session");
+        let yaml_path = session_dir.join(format!("{name}.service"));
+        self.handle_start_sysd_session_from_file(yaml_path).unwrap();
 
         self.get_all_session_info()
     }
