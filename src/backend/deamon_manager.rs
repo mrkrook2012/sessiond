@@ -264,6 +264,7 @@ impl DaemonManager {
         Ok(serde_yaml::to_string(&yaml_session)?)
     }
 
+
     pub fn handle_change_window(&mut self, window_id: WindowId) {
         self.user_manager.clear_all();
         let terminal_id = self
@@ -437,13 +438,18 @@ impl DaemonManager {
         self.get_all_session_info()
     }
 
+    // Called from run --sysd "Command"
     pub fn handle_create_sysd_session(
         &mut self,
         working_dir: String,
-        command: Option<String>,
+        command: Option<String>, //TODO MUST BE SOME
         name: Option<String>,
     ) -> Vec<SessionInfo> {
         // TODO THIS FUNCTION NEEDS TO DIE
+        // Start terminals
+        // Add terminals to windows
+        // Create running Sysd Session.
+
         todo!();
         println!("Got reqeust to make new sysd service");
         let name = name.unwrap_or_else(|| "penar".to_string());
@@ -451,10 +457,10 @@ impl DaemonManager {
         // Create terminal
         let (rows, cols) = self.user_manager.get_dimensions();
         let terminal_id = self.terminal_manager.create_terminal(rows, cols);
-
+        
         // Set working directory
         self.terminal_manager
-            .execute_command_on_terminal(terminal_id, format!("cd {working_dir} && clear"));
+            .execute_command_on_terminal(terminal_id, format!("cd {working_dir} && clear")); //TODO better create terminal method with params
 
         // Execute optional command
         if let Some(command) = command {
@@ -462,30 +468,41 @@ impl DaemonManager {
                 .execute_command_on_terminal(terminal_id, command);
         }
 
+        let command = command.unwrap();
         // Create window
         let window_id = self.window_manager.create_window(terminal_id);
 
         // Create systemd-backed session
         let unit_name = UnitName::new(&name).expect("Invalid systemd unit name");
+
         println!("Creating ephemoral session");
-        let ephem_session_id = self
-            .session_manager
-            .create_ephem_session(vec![window_id], unit_name.to_string());
+        let session_yaml = YamlSession {
+            name,
+            windows: vec![YamlWindow { command, working_directory: working_dir }],
+        };
 
-        std::thread::sleep(Duration::from_millis(1000));
+        let home = std::env::var("HOME").unwrap();
+        let path_to_yaml_file = PathBuf::from(home)
+            .join(".local/share/daemon_test")
+            .join(format!("{name}.yaml"));
 
-        // Export session YAML and generate systemd service
-        let home = std::env::var("HOME").expect("HOME environment variable not set");
+        println!("Writing to: {:?}", path_to_yaml_file);
+        //std::fs::write(&path_to_yaml_file, session_yaml).unwrap();
 
-        let session_dir = PathBuf::from(home).join(".local/share/daemon_test");
+        let unit = UnitName::new(&name).unwrap(); // validate synchronously, so bad names reach the client
+        let manager = Arc::clone(&self.systemd_manager);
+        let path = path_to_yaml_file.clone();
 
-        fs::create_dir_all(&session_dir).expect("Failed to create session directory");
+        // TODO, this might not actualy succeed
+        tokio::spawn(async move {
+            let mut manager = manager.lock().await;
+            if let Err(err) = manager.create_service_from_yaml(&path, unit).await {
+                eprintln!("failed to create systemd service: {err:?}");
+            }
+        });
 
-        println!("exporting ephemoral session");
-        self.handle_export_session(ephem_session_id)
-            .expect("Failed to export systemd session");
-        let yaml_path = session_dir.join(format!("{name}.service"));
-        self.handle_start_sysd_session_from_file(yaml_path).unwrap();
+
+        
 
         self.get_all_session_info()
     }
