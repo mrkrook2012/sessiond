@@ -489,6 +489,7 @@ dependencies = [
  "daemonize",
  "futures",
  "interprocess",
+ "libc",
  "mk_utils",
  "portable-pty",
  "rand 0.10.3",

@@ -94,6 +94,10 @@ impl DaemonClient {
         )
         .await
     }
+    pub async fn delete_sysd_session(&mut self, id: SessionId) -> Result<Vec<SessionInfo>> {
+        self.rpc_call_result(self.client.delete_sysd_session(context::current(), id))
+            .await
+    }
 
     pub async fn create_sysd_session(
         &self,

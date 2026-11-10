@@ -51,32 +51,7 @@ impl SessionManager {
         }
     }
 
-    // Only used on dormant sessions
-    pub fn start_sysd_session(&mut self, id: SessionId, windows: Vec<WindowId>) -> Result<()> {
-        let session = self
-            .get_session_by_id_mut(id)
-            .ok_or_eyre("Session not found")?;
 
-        match &mut session.kind {
-            SessionKind::Ephemoral { windows: _ } => bail!("Tried to start a non sysd session"),
-            SessionKind::SysdBased(sysd_session) => {
-                sysd_session.state = SessionState::Running { windows }
-            }
-        }
-        Ok(())
-    }
-
-    pub fn stop_sysd_session(&mut self, id: SessionId) -> Result<()> {
-        let session = self
-            .get_session_by_id_mut(id)
-            .ok_or_eyre("Session not found")?;
-
-        match &mut session.kind {
-            SessionKind::Ephemoral { windows: _ } => bail!("Tried to start a non sysd session"),
-            SessionKind::SysdBased(sysd_session) => sysd_session.state = SessionState::Stopped,
-        }
-        Ok(())
-    }
 
     pub fn remove_window_from_session(&mut self, id: SessionId, window_id: WindowId) -> Result<()> {
         let session = self
@@ -90,9 +65,7 @@ impl SessionManager {
         Ok(())
     }
 
-    pub fn get_name_by_id(&self, _id: SessionId) -> String {
-        "VERY_RANDOM_name".to_string() // TODO add this when needed
-    }
+
 
     pub fn get_all_windows_from_session(&self, id: SessionId) -> Option<&Vec<WindowId>> {
         let session = self.get_session_by_id(id);
@@ -117,7 +90,11 @@ impl SessionManager {
         id
     }
 
-    pub fn create_sysd_session(&mut self, name: UnitName, windows: Vec<WindowId>) -> SessionId {
+    pub fn create_running_sysd_session(
+        &mut self,
+        name: UnitName,
+        windows: Vec<WindowId>,
+    ) -> SessionId {
         let id = self.generate_id();
         let session = Session {
             id,
@@ -131,6 +108,69 @@ impl SessionManager {
         self.sessions.insert(id, session);
         id
     }
+
+    pub fn create_stopped_sysd_session(&mut self, name: UnitName) -> SessionId {
+        let id = self.generate_id();
+        let session = Session {
+            id,
+            name: name.to_string(),
+            kind: SessionKind::SysdBased(SysdSession {
+                name,
+                state: SessionState::Stopped,
+                enabled: false,
+            }),
+        };
+        self.sessions.insert(id, session);
+        id
+    }
+
+    pub fn does_session_name_exist(&self, name: &str) -> bool {
+        self.sessions.values().any(|session| session.name == name)
+    }
+
+    pub fn get_id_by_name(&self, name: &str) -> Option<SessionId> {
+        self.sessions
+            .values()
+            .find(|session| session.name.eq_ignore_ascii_case(name))
+            .map(|session| session.id)
+    }
+
+    // Only used on dormant sessions
+    pub fn start_sysd_session(&mut self, id: SessionId, windows: Vec<WindowId>) -> Result<()> {
+        let session = self
+            .get_session_by_id_mut(id)
+            .ok_or_eyre("Session not found")?;
+
+        match &mut session.kind {
+            SessionKind::Ephemoral { .. } => {
+                bail!("Tried to start a non sysd session")
+            }
+            SessionKind::SysdBased(sysd_session) => {
+                sysd_session.state = SessionState::Running { windows };
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn stop_sysd_session(&mut self, id: SessionId) -> Result<()> {
+        let session = self
+            .get_session_by_id_mut(id)
+            .ok_or_eyre("Session not found")?;
+
+        match &mut session.kind {
+            SessionKind::Ephemoral { .. } => {
+                bail!("Tried to stop a non sysd session")
+            }
+            SessionKind::SysdBased(sysd_session) => {
+                sysd_session.state = SessionState::Stopped;
+            }
+        }
+
+        Ok(())
+    }
+    //ect
+    // Also make start session, which will take in the window id's
 
     // TODO pub fn append_to_session maybe in IPC API
     pub fn add_window_to_session(&mut self, id: SessionId, window_id: WindowId) -> Result<()> {

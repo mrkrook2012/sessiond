@@ -97,6 +97,8 @@ pub enum ServiceCommands {
     Enable { name: String },
     /// Disables the service at boot
     Disable { name: String },
+    /// Deletes the systemd-managed session
+    Delete { name: String },
 }
 
 #[derive(Subcommand)]
@@ -281,19 +283,27 @@ async fn handle_run(systemd: bool, name: Option<String>, command: Vec<String>) -
     eprintln!("Starting {kind}: {name} (running: {command})");
 
     let sessions = if systemd {
-        rpc.create_sysd_session(working_dir, Some(command), Some(name.clone()))
-            .await?
+        let sessions = rpc
+            .create_sysd_session(working_dir, Some(command), Some(name.clone()))
+            .await?;
+        Command::new("systemctl")
+            .arg("--user")
+            .arg("start")
+            .arg(format!("{}.service", name))
+            .output()
+            .unwrap();
+        sessions
     } else {
         rpc.create_session(working_dir, Some(command), Some(name.clone()))
             .await?
     };
 
-    let session = sessions
-        .iter()
-        .find(|session| session.name == name)
-        .ok_or_else(|| eyre!("Failed to find newly created {kind} in list"))?;
+    // let session = sessions
+    //     .iter()
+    //     .find(|session| session.name == name)
+    //     .ok_or_else(|| eyre!("Failed to find newly created {kind} in list"))?;
 
-    println!("Created {kind}: {}", session.name);
+    // println!("Created {kind}: {}", session.name);
 
     Ok(())
 }
@@ -367,22 +377,36 @@ async fn handle_kill_all_sessions() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 async fn handle_service(action: ServiceCommands) -> Result<()> {
-    let (name, sysd_action, past_tense) = match action {
-        ServiceCommands::Start { name } => (name, SysdAction::Start, "Started"),
-        ServiceCommands::Stop { name } => (name, SysdAction::Stop, "Stopped"),
-        ServiceCommands::Restart { name } => (name, SysdAction::Restart, "Restarted"),
-        ServiceCommands::Enable { name } => (name, SysdAction::Enable, "Enabled"),
-        ServiceCommands::Disable { name } => (name, SysdAction::Disable, "Disabled"),
-    };
+    match action {
+        ServiceCommands::Delete { name } => {
+            let mut rpc = connect().await?;
+            let id = find_session_id(&rpc, &name).await?;
 
-    let rpc = connect().await?;
-    let id = find_session_id(&rpc, &name).await?;
+            rpc.delete_sysd_session(id).await?;
 
-    // The daemon rejects this for non-systemd sessions.
-    rpc.execute_sysd_action(id, sysd_action).await?;
+            println!("Deleted service: {name}");
+            Ok(())
+        }
+        action => {
+            let (name, sysd_action, past_tense) = match action {
+                ServiceCommands::Start { name } => (name, SysdAction::Start, "Started"),
+                ServiceCommands::Stop { name } => (name, SysdAction::Stop, "Stopped"),
+                ServiceCommands::Restart { name } => (name, SysdAction::Restart, "Restarted"),
+                ServiceCommands::Enable { name } => (name, SysdAction::Enable, "Enabled"),
+                ServiceCommands::Disable { name } => (name, SysdAction::Disable, "Disabled"),
+                ServiceCommands::Delete { .. } => unreachable!(),
+            };
 
-    println!("{past_tense} service: {name}");
-    Ok(())
+            let rpc = connect().await?;
+            let id = find_session_id(&rpc, &name).await?;
+
+            // The daemon rejects this for non-systemd sessions.
+            rpc.execute_sysd_action(id, sysd_action).await?;
+
+            println!("{past_tense} service: {name}");
+            Ok(())
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

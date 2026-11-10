@@ -8,6 +8,14 @@ use crate::backend::session_manager::UnitName;
 pub struct SystemdManager {}
 
 impl SystemdManager {
+    pub fn remove_sysd_service_file(name: &str) -> Result {
+        let home: String = std::env::var("HOME")?;
+
+        let path = Self::get_file_location_from_home(&home, name);
+        println!("Deleting {:?}", path);
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
     pub fn write_default_template_to_path(
         path_to_config_file: PathBuf,
         user: String,
@@ -82,6 +90,12 @@ impl SystemdManager {
     fn get_file_location(user: &str, name: &str) -> PathBuf {
         PathBuf::from("/home")
             .join(user)
+            .join(".config/systemd/user")
+            .join(format!("{name}.service"))
+    }
+
+    fn get_file_location_from_home(home: &str, name: &str) -> PathBuf {
+        PathBuf::from(home)
             .join(".config/systemd/user")
             .join(format!("{name}.service"))
     }

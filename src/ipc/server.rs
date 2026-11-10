@@ -183,6 +183,18 @@ impl DaemonService for DaemonRpcServer {
             .handle_stop_sysd_session(id)
             .map_err(|e| e.to_string())
     }
+
+    async fn delete_sysd_session(
+        self,
+        context: ::tarpc::context::Context,
+        id: SessionId,
+    ) -> Result<Vec<SessionInfo>, String> {
+        let mut manager = self.manager.lock().await;
+        manager
+            .handle_delete_sysd_session(id)
+            .map_err(|e| e.to_string())
+    }
+
 }
 
 pub async fn run_server(manager: DaemonManager) -> Result<()> {

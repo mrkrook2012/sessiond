@@ -1,11 +1,9 @@
-use portable_pty::{CommandBuilder, PtyPair, PtySize, native_pty_system};
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::RwLock;
+use portable_pty::{Child, PtyPair, PtySize, PtySystem, native_pty_system};
+use std::io::{Read, Write};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread::sleep;
 use std::time::Duration;
-use vt100::Callbacks;
-use vt100::Parser;
+use vt100::{Callbacks, Parser};
 
 use crate::backend::terminal_manager::TerminalId;
 
@@ -56,7 +54,8 @@ pub struct VirtualTerminal {
     id: TerminalId,
     parser: Arc<Mutex<Parser<Caller>>>,
     pair: PtyPair,
-    writer: Box<dyn std::io::Write + Send>,
+    child: Box<dyn Child + Send + Sync>,
+    writer: Box<dyn Write + Send>,
     width_factor: f32,
     height_factor: f32,
     global_rows: u16,
@@ -68,6 +67,7 @@ pub struct VirtualTerminal {
 impl VirtualTerminal {
     pub fn new(id: TerminalId, global_rows: u16, global_cols: u16) -> Self {
         let pty_system = native_pty_system();
+
         let pair = pty_system
             .openpty(PtySize {
                 rows: global_rows,
@@ -77,8 +77,9 @@ impl VirtualTerminal {
             })
             .unwrap();
 
-        pair.slave
-            .spawn_command(CommandBuilder::new("/bin/bash"))
+        let child = pair
+            .slave
+            .spawn_command(portable_pty::CommandBuilder::new("/bin/bash"))
             .unwrap();
 
         let mut writer = pair.master.take_writer().unwrap();
@@ -99,10 +100,9 @@ impl VirtualTerminal {
         )));
 
         let reader = pair.master.try_clone_reader().unwrap();
-        let parser2 = parser.clone();
+        let parser2 = Arc::clone(&parser);
 
         tokio::task::spawn_blocking(move || {
-            let parser = parser2;
             let mut reader = reader;
             let mut buffer = [0u8; 8192];
 
@@ -110,7 +110,7 @@ impl VirtualTerminal {
                 match reader.read(&mut buffer) {
                     Ok(0) => break,
                     Ok(n) => {
-                        parser.lock().unwrap().process(&buffer[..n]);
+                        parser2.lock().unwrap().process(&buffer[..n]);
                     }
                     Err(e) => {
                         eprintln!("PTY read error: {e}");
@@ -152,6 +152,7 @@ impl VirtualTerminal {
             id,
             parser,
             pair,
+            child,
             writer,
             width_factor: 1.0,
             height_factor: 1.0,
@@ -226,5 +227,111 @@ impl VirtualTerminal {
                 pixel_width: 0,
             })
             .unwrap();
+    }
+}
+
+impl Drop for VirtualTerminal {
+    fn drop(&mut self) {
+        println!("Dropping VirtualTerminal {:?}", self.id);
+
+        terminate_process_tree(&mut *self.child, &*self.pair.master);
+
+        println!("VirtualTerminal {:?} terminated", self.id);
+    }
+}
+
+/// Terminates the PTY session and its foreground process group.
+///
+/// portable-pty creates the shell as a session leader on Unix.
+/// Interactive shells may put foreground jobs into separate
+/// process groups, so we terminate both.
+#[cfg(unix)]
+fn terminate_process_tree(child: &mut dyn Child, master: &dyn portable_pty::MasterPty) {
+    use std::collections::BTreeSet;
+    use std::os::fd::RawFd;
+
+    fn signal_group(pgid: libc::pid_t, signal: libc::c_int) {
+        if pgid <= 0 {
+            return;
+        }
+
+        // Negative PID means signal the entire process group.
+        let result = unsafe { libc::kill(-pgid, signal) };
+
+        if result != 0 {
+            let error = std::io::Error::last_os_error();
+
+            // ESRCH means the process group has already exited.
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                eprintln!("Failed to signal process group {pgid}: {error}");
+            }
+        }
+    }
+
+    // The PTY child is the session/process-group leader.
+    let leader = master
+        .process_group_leader()
+        .or_else(|| child.process_id().map(|pid| pid as libc::pid_t));
+
+    let Some(leader) = leader else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return;
+    };
+
+    // Find the foreground process group attached to the PTY.
+    let foreground = master.as_raw_fd().and_then(|fd: RawFd| {
+        let pgid = unsafe { libc::tcgetpgrp(fd) };
+
+        if pgid > 0 { Some(pgid) } else { None }
+    });
+
+    // Only signal groups belonging to this terminal's session.
+    let session_id = unsafe { libc::getsid(leader) };
+
+    let mut groups = BTreeSet::new();
+    groups.insert(leader);
+
+    if let Some(pgid) = foreground {
+        if pgid > 0 && unsafe { libc::getsid(pgid) } == session_id {
+            groups.insert(pgid);
+        }
+    }
+
+    println!(
+        "Terminating PTY session {leader}, process groups: {:?}",
+        groups
+    );
+
+    eprintln!("before SIGTERM");
+    for pgid in &groups {
+        eprintln!("SIGTERM pgid={pgid}");
+        unsafe { libc::kill(-*pgid, libc::SIGTERM) };
+    }
+
+    eprintln!("before grace period");
+    std::thread::sleep(Duration::from_millis(300));
+
+    eprintln!("before SIGKILL");
+    for pgid in &groups {
+        eprintln!("SIGKILL pgid={pgid}");
+        unsafe { libc::kill(-*pgid, libc::SIGKILL) };
+    }
+
+    eprintln!("before child.wait");
+    //let result = child.wait();
+    //eprintln!("after child.wait: {result:?}");
+}
+
+/// Windows fallback: portable-pty kills the direct child.
+/// It does not guarantee termination of all descendants.
+#[cfg(not(unix))]
+fn terminate_process_tree(child: &mut dyn Child, _master: &dyn portable_pty::MasterPty) {
+    if let Err(e) = child.kill() {
+        eprintln!("Failed to kill PTY child: {e}");
+    }
+
+    if let Err(e) = child.wait() {
+        eprintln!("Failed to wait for PTY child: {e}");
     }
 }

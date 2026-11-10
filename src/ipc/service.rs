@@ -30,6 +30,8 @@ pub trait DaemonService {
         name: Option<String>,
     ) -> Vec<SessionInfo>;
 
+    async fn delete_sysd_session(id: SessionId) -> Result<Vec<SessionInfo>, String>;
+
     /// Stop sending terminal updates for the current session.
     async fn exit_session() -> Vec<SessionInfo>;
 

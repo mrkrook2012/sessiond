@@ -101,10 +101,19 @@ impl Harness {
 
 impl Drop for Harness {
     fn drop(&mut self) {
+        eprintln!("Test daemon logs:");
+
+        for file in ["daemon.out", "daemon.err"] {
+            let path = self.dir.path().join(file);
+
+            if let Ok(contents) = fs::read_to_string(path) {
+                eprintln!("--- {file} ---\n{contents}");
+            }
+        }
+
         let _ = self.raw(&["daemon", "stop"]);
     }
 }
-
 // ---------------------------------------------------------------------------
 // Session lifecycle
 // ---------------------------------------------------------------------------
@@ -113,7 +122,7 @@ impl Drop for Harness {
 fn lifecycle_run_list_attach_kill() {
     let h = Harness::new();
 
-    h.ok(&["run", "--name", "alpha", "sleep", "10"]);
+    h.ok(&["run", "--name", "alpha", "sleep", "1"]);
     assert_eq!(h.sessions(), vec!["alpha"]);
 
     h.ok(&["attach", "alpha"]);
@@ -126,7 +135,7 @@ fn lifecycle_run_list_attach_kill() {
 fn run_without_name_gets_a_generated_name() {
     let h = Harness::new();
 
-    h.ok(&["run", "sleep", "10"]);
+    h.ok(&["run", "sleep", "1"]);
 
     assert_eq!(h.sessions().len(), 1);
 }
@@ -135,8 +144,8 @@ fn run_without_name_gets_a_generated_name() {
 fn multiple_sessions_and_kill_all() {
     let h = Harness::new();
 
-    h.ok(&["run", "-n", "one", "sleep", "10"]);
-    h.ok(&["run", "-n", "two", "sleep", "10"]);
+    h.ok(&["run", "-n", "one", "sleep", "1"]);
+    h.ok(&["run", "-n", "two", "sleep", "1"]);
 
     let mut names = h.sessions();
     names.sort();
@@ -152,7 +161,7 @@ fn multiple_sessions_and_kill_all() {
 fn killing_unknown_session_fails() {
     let h = Harness::new();
 
-    h.ok(&["run", "-n", "real", "sleep", "10"]);
+    h.ok(&["run", "-n", "real", "sleep", "1"]);
 
     let err = h.fails(&["kill", "does-not-exist"]);
 
@@ -165,9 +174,9 @@ fn killing_unknown_session_fails() {
 fn duplicate_session_name_is_rejected() {
     let h = Harness::new();
 
-    h.ok(&["run", "-n", "dup", "sleep", "10"]);
+    h.ok(&["run", "-n", "dup", "sleep", "1"]);
 
-    let err = h.fails(&["run", "-n", "dup", "sleep", "10"]);
+    let err = h.fails(&["run", "-n", "dup", "sleep", "1"]);
 
     assert!(err.contains("already exists"), "got: {err}");
 
@@ -192,7 +201,7 @@ fn daemon_starts_automatically_when_running_a_session() {
     let h = Harness::new();
 
     // Starting a session should automatically start the daemon.
-    h.ok(&["run", "-n", "auto", "sleep", "10"]);
+    h.ok(&["run", "-n", "auto", "sleep", "1"]);
 
     h.ok(&["daemon", "status"]);
 
@@ -207,7 +216,7 @@ fn daemon_status_reports_running_and_stopped() {
     h.fails(&["daemon", "status"]);
 
     // Running a session starts the daemon.
-    h.ok(&["run", "sleep", "10"]);
+    h.ok(&["run", "sleep", "1"]);
 
     h.ok(&["daemon", "status"]);
 
@@ -222,7 +231,7 @@ fn daemon_status_reports_running_and_stopped() {
 fn daemon_stop_stops_it() {
     let h = Harness::new();
 
-    h.ok(&["run", "-n", "x", "sleep", "10"]);
+    h.ok(&["run", "-n", "x", "sleep", "1"]);
 
     h.ok(&["daemon", "stop"]);
 
@@ -311,6 +320,17 @@ fn export_and_import_session_roundtrip() {
     assert!(h.sessions().is_empty());
 
     h.assert_daemon_healthy("end of roundtrip test");
+}
+#[test]
+fn systemd_round_trip() {
+    let h = Harness::new();
+    h.ok(&["run", "--systemd", "--name", "testing101", "echo test"]);
+
+    h.ok(&["service", "delete", "testing101"]);
+
+    h.ok(&["run", "--systemd", "--name", "testing101", "echo test"]);
+
+    h.ok(&["service", "delete", "testing101"]);
 }
 
 #[test]
