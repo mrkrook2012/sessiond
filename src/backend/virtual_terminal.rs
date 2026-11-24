@@ -95,7 +95,7 @@ impl VirtualTerminal {
         let parser = Arc::new(Mutex::new(Parser::new_with_callbacks(
             global_rows,
             global_cols,
-            0,
+            20,
             caller,
         )));
 

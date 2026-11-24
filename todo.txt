@@ -11,21 +11,21 @@ todo:
   - Fix btop in terminal
   - Add scrollback to terminals
   
+  - Add process tracking based restart
   - Add adding stale sysd services
   - Add daemon based duplicate name rejection
   - Add event based sysd status tracking
   - make CI/CD pipeline V
-  - Finalize systemd integration
   - Fish hints integration
   - Clean up CLI V
   - Clean logging
   - Think of an actual name
-  - Simple .deb release pipeline
+  - Simple .deb release pipeline V
   - Multi user 
   - Optimize screen transfer
   - Rewrite frontend
   - Improve error handling in the frontend. 
-  - Improve startup robustness and error handling
+  - Improve startup robustness and error handling V
   - Understand the macro language
   - Clean up build warnings
   - Look into supporting fish or zsh
@@ -43,6 +43,10 @@ The Stop is never sent when stopping or when restarting due to the service type 
 This means that we only get start messages
 temp solution is when starting an already started sysd session, we restart <- incorrect
 
+// tracking
+The yaml file should contain the windows whose outputs are tracked. 
+The internal start should only end when a tracked window ends or fails. 
+This way we can piggy back off of sysd restarts. 
 
 Cli sketch
 myapp run <command> [args...] // Creates new session
