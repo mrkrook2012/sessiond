@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 
 use daemon_test::backend::session_manager::UnitName;
 use daemon_test::backend::systemd_manager::{RestartPolicy, SystemdManager};
@@ -9,10 +9,10 @@ use tempfile::TempDir;
 fn write_unit(name: &str) -> (TempDir, String) {
     let dir = TempDir::new().unwrap();
     SystemdManager::write_default_template_to_path(
-        PathBuf::from("/data/My Session.yaml"),
-        "alice".into(),
+        Path::new("/data/My Session.yaml"),
+        "alice",
         dir.path(),
-        UnitName::new(name).unwrap(),
+        &UnitName::new(name).unwrap(),
     )
     .unwrap();
 

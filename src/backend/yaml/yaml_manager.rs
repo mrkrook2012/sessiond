@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::Result;
 
@@ -50,7 +50,7 @@ impl YamlManager {
         Ok(files)
     }
 
-    pub fn load_session(&self, path: PathBuf) -> Result<YamlSession> {
+    pub fn load_session(&self, path: &Path) -> Result<YamlSession> {
         let input = fs::read_to_string(path)?;
         Ok(serde_yaml::from_str(&input)?)
     }
@@ -84,7 +84,7 @@ impl YamlManager {
             .list_session_files()?
             .into_iter()
             .filter(|path| {
-                let name = match self.load_session(path.clone()) {
+                let name = match self.load_session(path) {
                     Ok(session) => session.name,
                     Err(_) => path
                         .file_stem()

@@ -15,18 +15,17 @@ impl SystemdServiceManager {
     pub fn create_service_from_yaml(
         &mut self,
         yaml_path: &Path,
-        name: UnitName,
+        name: &UnitName,
     ) -> Result<()> {
         // TODO checking name
-        let yaml_path = yaml_path.to_str().unwrap();
         let sysd_dir_builder = SystemdManager::unit_dir()?;
         std::fs::create_dir_all(&sysd_dir_builder)?;
 
         let user = std::env::var("USER")?;
 
         SystemdManager::write_default_template_to_path(
-            yaml_path.into(),
-            user,
+            yaml_path,
+            &user,
             &sysd_dir_builder,
             name
         )?;
@@ -36,7 +35,7 @@ impl SystemdServiceManager {
 
     /// True if a unit file for this session exists in the user unit directory.
     pub fn unit_file_exists(&self, name: &UnitName) -> bool {
-        SystemdManager::unit_file_path(&name.to_string())
+        SystemdManager::unit_file_path(name.as_str())
             .map(|path| path.is_file())
             .unwrap_or(false)
     }

@@ -194,7 +194,7 @@ impl DaemonManager {
     // ------------------------------------------------ runtime + store
 
     pub fn handle_start_session_from_file(&mut self, file_path: PathBuf) -> Result<()> {
-        let yaml = self.store.load(file_path)?;
+        let yaml = self.store.load(&file_path)?;
 
         let windows = self.runtime.spawn_windows(yaml.windows, false);
         info!(session = %yaml.name, "Started session from file");
@@ -206,12 +206,12 @@ impl DaemonManager {
     /// Starts (or restarts) a sysd session from its YAML. Returns the id of this run,
     /// which `__internal-systemd-start` then waits on.
     pub fn handle_start_sysd_session_from_file(&mut self, file_path: PathBuf) -> Result<RunId> {
-        let yaml = self.store.load(file_path)?;
+        let yaml = self.store.load(&file_path)?;
         let name = UnitName::new(&yaml.name)?;
 
         let windows = self.runtime.spawn_windows(yaml.windows, true);
         let run = self.runtime.start_or_create_sysd_session(name.clone(), windows)?;
-        info!(session = %name.to_string(), ?run, "Started sysd session");
+        info!(session = %name, ?run, "Started sysd session");
         self.notify_changed();
 
         Ok(run)
@@ -234,7 +234,7 @@ impl DaemonManager {
 
         self.runtime.kill_session(id);
 
-        self.store.create_service(&path, unit)?;
+        self.store.create_service(&path, &unit)?;
         Ok(())
     }
 
@@ -263,7 +263,7 @@ impl DaemonManager {
         let path = self.store.save(&yaml).unwrap();
 
         // TODO, this might not actually succeed
-        self.store.create_service(&path, unit.clone()).unwrap();
+        self.store.create_service(&path, &unit).unwrap();
 
         self.runtime.add_stopped_sysd_session(unit, false);
         self.runtime.all_session_info()
@@ -277,10 +277,10 @@ impl DaemonManager {
         let mut registered = 0;
 
         for stored in self.store.discover_sysd_sessions()? {
-            if self.runtime.session_name_exists(&stored.unit.to_string()) {
+            if self.runtime.session_name_exists(stored.unit.as_str()) {
                 continue;
             }
-            debug!("Registering stopped sysd session '{}'", stored.unit.to_string());
+            debug!("Registering stopped sysd session '{}'", stored.unit);
             // The enabled state is filled in by the systemd event watcher once it connects.
             self.runtime.add_stopped_sysd_session(stored.unit, false);
             registered += 1;
@@ -293,7 +293,7 @@ impl DaemonManager {
     /// (it has a unit file). Errors if `name` is an ephemeral session.
     pub fn sysd_delete_target(&self, name: &str) -> Result<(UnitName, bool)> {
         let unit = UnitName::new(name)?;
-        if let Some(id) = self.runtime.session_id_by_name(&unit.to_string()) {
+        if let Some(id) = self.runtime.session_id_by_name(unit.as_str()) {
             // Errors for ephemeral sessions.
             self.runtime.sysd_unit(id)?;
         }
@@ -305,11 +305,11 @@ impl DaemonManager {
     /// daemon has one. Also works for leftovers the daemon never registered (e.g. a YAML
     /// whose unit file is gone). Returns the removed files.
     pub fn handle_delete_sysd_session(&mut self, unit: &UnitName) -> Result<Vec<PathBuf>> {
-        let session = self.runtime.session_id_by_name(&unit.to_string());
+        let session = self.runtime.session_id_by_name(unit.as_str());
 
         // Do the fallible disk work first so a failure leaves live state untouched.
         let removed = self.store.delete(unit)?;
-        info!(unit = %unit.to_string(), files = removed.len(), "Deleted sysd session");
+        info!(unit = %unit, files = removed.len(), "Deleted sysd session");
 
         match session {
             Some(id) => {
@@ -317,7 +317,7 @@ impl DaemonManager {
                 self.notify_changed();
             }
             None if removed.is_empty() => {
-                bail!("No service named '{}'", unit.to_string())
+                bail!("No service named '{unit}'")
             }
             None => {}
         }

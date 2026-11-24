@@ -317,7 +317,7 @@ async fn handle_run(systemd: bool, name: Option<String>, command: Vec<String>) -
         let id = find_session_id(&rpc, &name).await?;
         rpc.execute_sysd_action(id, SysdAction::Start).await?;
     } else {
-        rpc.create_session(working_dir, Some(command), Some(name.clone()))
+        rpc.create_session(working_dir, Some(command), Some(name))
             .await?;
     }
 
@@ -638,7 +638,7 @@ async fn handle_internal_systemd_start(file_path: PathBuf) -> Result<()> {
 pub fn session_name_from_config(path: &std::path::Path) -> Result<String> {
     let yaml: crate::backend::yaml::models::YamlSession =
         serde_yaml::from_str(&fs::read_to_string(path)?)?;
-    Ok(crate::backend::session_manager::UnitName::new(&yaml.name)?.to_string())
+    Ok(crate::backend::session_manager::UnitName::new(&yaml.name)?.into_string())
 }
 
 /// Stops a systemd-managed session. Does not start the daemon.

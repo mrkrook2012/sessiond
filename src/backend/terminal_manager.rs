@@ -36,7 +36,7 @@ impl TerminalManager {
         self.terminals
             .iter()
             .map(|(id, terminal)| TerminalUpdate {
-                terminal_id: id.clone(),
+                terminal_id: *id,
                 data: terminal.get_screen(),
             })
             .collect()

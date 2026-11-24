@@ -572,7 +572,7 @@ pub async fn run_frontend() -> Result<()> {
                                     st.input_mode = InputMode::Normal;
                                 }
                                 KeyCode::Enter => {
-                                    let name = text.clone();
+                                    let name = std::mem::take(text);
                                     st.input_mode = InputMode::Normal;
                                     if !name.is_empty() {
                                         let working_dir = std::env::var("HOME")
@@ -948,8 +948,7 @@ fn draw_terminal_screen(frame: &mut ratatui::Frame, area: Rect, st: &AppState) {
     let name = st
         .current_session
         .as_ref()
-        .map(|s| s.name.clone())
-        .unwrap_or_default();
+        .map_or("", |s| s.name.as_str());
 
     let tabs = Tabs::new(titles)
         .block(

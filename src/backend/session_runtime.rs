@@ -80,9 +80,9 @@ impl SessionRuntime {
         self.user_manager.set_current_id(id);
 
         let window_id = self
-            .windows_of(id)
-            .into_iter()
-            .next()
+            .session_manager
+            .get_all_windows_from_session(id)
+            .and_then(|windows| windows.first().copied())
             .ok_or_else(|| eyre!("No windows found for session"))?;
 
         let terminal_id = self
@@ -161,9 +161,7 @@ impl SessionRuntime {
         name: UnitName,
         windows: Vec<WindowId>,
     ) -> Result<RunId> {
-        let name_str = name.to_string();
-
-        match self.session_manager.get_id_by_name(&name_str) {
+        match self.session_manager.get_id_by_name(name.as_str()) {
             Some(id) => {
                 // Should already be stopped (ExecStop runs first), but never leak old windows.
                 self.teardown_windows(id);
@@ -353,20 +351,19 @@ impl SessionRuntime {
             return;
         };
         if sysd.is_running() {
-            info!(unit = %unit.to_string(), "Unit went inactive, stopping its session");
+            info!(unit = %unit, "Unit went inactive, stopping its session");
             let _ = self.stop_sysd_session(id);
         }
     }
 
     // ---------------------------------------------------------------- queries
 
-    pub fn session_name(&self, id: SessionId) -> Result<String> {
-        Ok(self
+    pub fn session_name(&self, id: SessionId) -> Result<&str> {
+        Ok(&self
             .session_manager
             .get_session_by_id(id)
             .ok_or_eyre("Session not found")?
-            .name
-            .clone())
+            .name)
     }
 
     /// Builds the YAML representation of a running session. Does not write anything.
@@ -376,12 +373,11 @@ impl SessionRuntime {
             .get_session_by_id(id)
             .ok_or_eyre("Session not found")?;
 
-        if self.session_manager.get_all_windows_from_session(id).is_none() {
+        let Some(window_ids) = self.session_manager.get_all_windows_from_session(id) else {
             bail!("Trying to get windowless sessions to yaml, error");
-        }
+        };
 
-        let windows = self
-            .windows_of(id)
+        let windows = window_ids
             .iter()
             .map(|window_id| {
                 let terminal_id = self
@@ -414,9 +410,8 @@ impl SessionRuntime {
 
         let windows: Vec<_> = session
             .get_windows()
-            .cloned()
-            .unwrap_or_default()
-            .iter()
+            .into_iter()
+            .flatten()
             .map(|window_id| {
                 self.window_manager
                     .get_window_by_id(window_id)

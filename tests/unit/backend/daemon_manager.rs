@@ -251,7 +251,7 @@ fn delete_target_accepts_unknown_names() {
     let f = Fixture::new();
     let name = unique("ghost");
     let (unit, has_unit_file) = f.manager.sysd_delete_target(&name).unwrap();
-    assert_eq!(unit.to_string(), name);
+    assert_eq!(unit.as_str(), name);
     assert!(!has_unit_file);
 }
 

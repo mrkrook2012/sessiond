@@ -38,7 +38,7 @@ fn save_and_load_round_trip() {
     let path = manager.save_session(&session("Alpha", true)).unwrap();
     assert_eq!(path, manager.get_session_path("Alpha"));
 
-    let loaded = manager.load_session(path).unwrap();
+    let loaded = manager.load_session(&path).unwrap();
     assert_eq!(loaded.name, "Alpha");
     assert_eq!(loaded.windows.len(), 1);
     assert_eq!(loaded.windows[0].command, "sleep 300");
@@ -69,8 +69,8 @@ fn invalid_yaml_is_an_error() {
 
     let path = manager.get_storage_dir().join("broken.yaml");
     fs::write(&path, "[[[").unwrap();
-    assert!(manager.load_session(path).is_err());
-    assert!(manager.load_session(manager.get_session_path("nope")).is_err());
+    assert!(manager.load_session(&path).is_err());
+    assert!(manager.load_session(&manager.get_session_path("nope")).is_err());
 }
 
 #[test]

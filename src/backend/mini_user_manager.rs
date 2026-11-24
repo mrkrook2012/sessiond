@@ -55,7 +55,7 @@ impl MiniUserManager {
         self.visible_terminals.clear()
     }
 
-    pub fn get_all_terminals(&self) -> Vec<TerminalId> {
-        self.visible_terminals.clone()
+    pub fn get_all_terminals(&self) -> &[TerminalId] {
+        &self.visible_terminals
     }
 }

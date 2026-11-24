@@ -1,5 +1,5 @@
 use tracing::{debug, info, warn};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
  
 use crate::backend::session_manager::UnitName;
 use crate::backend::systemd_manager::SystemdManager;
@@ -23,7 +23,7 @@ impl SessionStore {
         }
     }
  
-    pub fn load(&mut self, file_path: PathBuf) -> Result<YamlSession> {
+    pub fn load(&mut self, file_path: &Path) -> Result<YamlSession> {
         self.yaml_manager.load_session(file_path)
     }
  
@@ -42,7 +42,7 @@ impl SessionStore {
     }
  
     /// Writes the unit file. The caller must reload systemd afterwards.
-    pub fn create_service(&mut self, yaml_path: &PathBuf, unit: UnitName) -> Result<()> {
+    pub fn create_service(&mut self, yaml_path: &Path, unit: &UnitName) -> Result<()> {
         self.systemd_manager.create_service_from_yaml(yaml_path, unit)
     }
  
@@ -55,7 +55,7 @@ impl SessionStore {
         let mut found: Vec<StoredSysdSession> = Vec::new();
 
         for path in self.yaml_manager.list_session_files()? {
-            let yaml = match self.yaml_manager.load_session(path.clone()) {
+            let yaml = match self.yaml_manager.load_session(&path) {
                 Ok(yaml) => yaml,
                 Err(e) => {
                     warn!("Skipping {}: failed to parse ({e})", path.display());
@@ -73,12 +73,12 @@ impl SessionStore {
 
             if !self.systemd_manager.unit_file_exists(&unit) {
                 // Normal for exported sessions that were never turned into a service.
-                debug!("Skipping {}: no unit file for '{}'", path.display(), unit.to_string());
+                debug!("Skipping {}: no unit file for '{}'", path.display(), unit);
                 continue;
             }
 
             if found.iter().any(|s| s.unit == unit) {
-                warn!("Skipping {}: duplicate of unit '{}'", path.display(), unit.to_string());
+                warn!("Skipping {}: duplicate of unit '{}'", path.display(), unit);
                 continue;
             }
 
@@ -96,9 +96,9 @@ impl SessionStore {
     /// gone are skipped, so a half-deleted session can still be cleaned up.
     /// Returns the files that were removed.
     pub fn delete(&mut self, unit: &UnitName) -> Result<Vec<PathBuf>> {
-        let mut files = self.yaml_manager.find_session_files(&unit.to_string())?;
+        let mut files = self.yaml_manager.find_session_files(unit.as_str())?;
         if self.systemd_manager.unit_file_exists(unit) {
-            files.push(SystemdManager::unit_file_path(&unit.to_string())?);
+            files.push(SystemdManager::unit_file_path(unit.as_str())?);
         }
 
         for file in &files {

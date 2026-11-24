@@ -175,7 +175,7 @@ fn sysd_units_lists_only_sysd_sessions() {
     manager.create_stopped_sysd_session(unit("stopped"), false);
     manager.create_running_sysd_session(unit("running"), vec![]);
 
-    let mut units: Vec<String> = manager.sysd_units().iter().map(UnitName::to_string).collect();
+    let mut units: Vec<String> = manager.sysd_units().into_iter().map(UnitName::into_string).collect();
     units.sort();
     assert_eq!(units, vec!["running", "stopped"]);
 }

@@ -111,7 +111,7 @@ impl SystemdClient {
 }
 
 fn service_name(unit: &UnitName) -> String {
-    format!("{}.service", unit.to_string())
+    format!("{unit}.service")
 }
 
 // ---------------------------------------------------------------------------
@@ -189,7 +189,7 @@ async fn refresh_enabled(client: &SystemdClient, manager: &Arc<Mutex<DaemonManag
     for unit in units {
         match client.is_enabled(&unit).await {
             Ok(enabled) => {
-                trace!(unit = %unit.to_string(), enabled, "Refreshed enabled state");
+                trace!(unit = %unit, enabled, "Refreshed enabled state");
                 manager.lock().await.set_sysd_enabled(&unit, enabled)
             }
             Err(e) => warn!("{e:#}"),
@@ -198,10 +198,11 @@ async fn refresh_enabled(client: &SystemdClient, manager: &Arc<Mutex<DaemonManag
 }
 
 async fn handle_properties_changed(message: zbus::Message, manager: &Arc<Mutex<DaemonManager>>) {
-    let Some(path) = message.header().path().map(|path| path.to_string()) else {
-        return;
-    };
-    let Some(unit) = unit_from_object_path(&path) else {
+    let Some(unit) = message
+        .header()
+        .path()
+        .and_then(|path| unit_from_object_path(path.as_str()))
+    else {
         return;
     };
     let Some(signal) = PropertiesChanged::from_message(message) else {
@@ -218,7 +219,7 @@ async fn handle_properties_changed(message: zbus::Message, manager: &Arc<Mutex<D
         return;
     };
 
-    trace!(unit = %unit.to_string(), %active_state, "Unit state changed");
+    trace!(unit = %unit, %active_state, "Unit state changed");
 
     if matches!(active_state.as_str(), "inactive" | "failed") {
         manager.lock().await.handle_unit_deactivated(&unit);

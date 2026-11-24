@@ -95,7 +95,7 @@ impl SessionManager {
         let run = self.next_run();
         let session = Session {
             id,
-            name: name.to_string(),
+            name: name.as_str().to_owned(),
             kind: SessionKind::SysdBased(SysdSession {
                 name,
                 state: SessionState::running(windows, run),
@@ -110,7 +110,7 @@ impl SessionManager {
         let id = self.generate_id();
         let session = Session {
             id,
-            name: name.to_string(),
+            name: name.as_str().to_owned(),
             kind: SessionKind::SysdBased(SysdSession {
                 name,
                 state: SessionState::Stopped,
@@ -352,10 +352,20 @@ pub struct UnitName(String);
 impl UnitName {
     pub fn new(name: &str) -> Result<Self> {
         // TODO add actual verification here.
-        Ok(UnitName(name.to_string().to_ascii_lowercase()))
+        Ok(UnitName(name.to_ascii_lowercase()))
     }
 
-    pub fn to_string(&self) -> String {
-        self.0.clone()
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl std::fmt::Display for UnitName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
     }
 }

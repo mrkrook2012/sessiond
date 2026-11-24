@@ -218,7 +218,7 @@ impl DaemonService for DaemonRpcServer {
             SysdAction::Disable => systemd.disable(&unit).await,
         };
         result.map_err(|e| {
-            warn!(unit = %unit.to_string(), ?sysd_action, "systemd action failed: {e:#}");
+            warn!(unit = %unit, ?sysd_action, "systemd action failed: {e:#}");
             format!("{e:#}")
         })?;
 

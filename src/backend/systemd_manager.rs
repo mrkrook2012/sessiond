@@ -27,31 +27,31 @@ impl SystemdManager {
     }
 
     pub fn write_default_template_to_path(
-        path_to_config_file: PathBuf,
-        user: String,
+        path_to_config_file: &Path,
+        user: &str,
         sysd_directory: &Path,
-        name: UnitName,
+        name: &UnitName,
     ) -> Result<()> {
         let mut service_file_path_buffer = sysd_directory.to_path_buf();
-        service_file_path_buffer.push(name.to_string());
+        service_file_path_buffer.push(name.as_str());
         service_file_path_buffer.add_extension("service");
         let bin_path = std::env::current_exe()
             .unwrap()
-            .to_str()
-            .unwrap()
-            .to_owned();
+            .into_os_string()
+            .into_string()
+            .unwrap();
 
         if bin_path.contains("(deleted)") {
             panic!("Binary location has been deleted???")
         }
         let start_command = format!(
             "{bin_path} __internal-systemd-start {:?}",
-            path_to_config_file.as_path()
+            path_to_config_file
         );
-        let stop_command = format!("{bin_path} __internal-systemd-stop {:?}", name.to_string());
+        let stop_command = format!("{bin_path} __internal-systemd-stop {:?}", name.as_str());
 
         let mut file_contents = Self::get_filled_template(
-            &user,
+            user,
             sysd_directory,
             start_command,
             stop_command,
@@ -101,8 +101,7 @@ impl SystemdManager {
         WantedBy=default.target
         
         "
-        .to_owned()
-        .replace("{user}", &user)
+        .replace("{user}", user)
         .replace("{start_command}", &start_command)
         .replace("{stop_command}", &stop_command)
         .replace("{work_dir}", directory.to_str().unwrap())
