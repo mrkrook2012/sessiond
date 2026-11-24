@@ -1,4 +1,3 @@
-use interprocess::local_socket::{GenericFilePath, Name, ToFsName};
 use std::path::PathBuf;
 
 pub const VERSION: f32 = 0.00;
@@ -13,8 +12,3 @@ pub fn socket_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(DEFAULT_SOCKET_PATH))
 }
 
-pub fn socket_name() -> Name<'static> {
-    socket_path()
-        .to_fs_name::<GenericFilePath>()
-        .expect("invalid socket path")
-}
