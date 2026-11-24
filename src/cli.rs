@@ -44,7 +44,9 @@ pub enum Commands {
         #[arg(short, long)]
         name: Option<String>,
 
-        /// The command and its arguments
+        /// The command to run. A single argument is a shell command line, so
+        /// `run "make && ./serve"` works; several arguments are a command and its
+        /// arguments, passed on exactly as given (`run sh -c 'sleep 300'`).
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
     },
@@ -193,6 +195,18 @@ pub fn shell_quote(arg: &str) -> String {
     }
 }
 
+/// The command line `run` types into the terminal.
+///
+/// One argument already is a command line (`run "echo hello && echo world"`), so it is used
+/// as is: quoting it would make the shell look for a program with that whole name. Several
+/// arguments are a command and its arguments, so each is quoted to reach it unchanged.
+pub fn command_line(args: &[String]) -> String {
+    match args {
+        [line] => line.clone(),
+        args => shell_join(args),
+    }
+}
+
 /// Turn argv into one command line for the terminal.
 pub fn shell_join(args: &[String]) -> String {
     args.iter()
@@ -309,7 +323,7 @@ async fn handle_run(systemd: bool, name: Option<String>, command: Vec<String>) -
     }
 
     let name = name.unwrap_or_else(generate_random_name);
-    let command = shell_join(&command);
+    let command = command_line(&command);
 
     // The daemon has its own working directory, so send ours explicitly.
     let working_dir = std::env::current_dir()?.to_string_lossy().into_owned();

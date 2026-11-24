@@ -44,7 +44,8 @@ pub const TERMINATE_GRACE: Duration = Duration::from_millis(500);
 /// first in PROMPT_COMMAND so it still sees the command's `$?`, and only reports once
 /// per tracked command. Ctrl+C aborts the rest of the line, but the prompt hook still runs.
 ///
-/// `__osc133_launch <n>` reports `133;L;<n>` once the shell gets to it; see `PendingLaunch`.
+/// `__osc133_launch <n>` reports `133;L;<n>` once the shell gets to it, and every prompt
+/// reports `133;A`; see `PendingLaunch`.
 ///
 /// The `bind`s make the keys the frontend sends for Ctrl/Alt + arrows, Home/End and
 /// Ctrl+Delete edit the command line, whatever the system's inputrc does.
@@ -77,6 +78,7 @@ __osc133_prompt() {
         unset __osc133_tracking
         printf '\033]133;T;%s\007' "$status"
     fi
+    printf '\033]133;A\007'
 }
 trap '__osc133_command_start' DEBUG
 PROMPT_COMMAND="__osc133_prompt${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
@@ -96,25 +98,34 @@ struct ShellState {
     /// The command / directory the shell last reported (`133;C` / `133;P`).
     reported_command: String,
     reported_pwd: String,
-    /// A launch the shell has not caught up with yet.
+    /// A launched command line that has not finished yet.
     launch: Option<PendingLaunch>,
 }
 
-/// A command the daemon typed into the shell that the shell has not started yet.
+/// A command line the daemon typed into the shell, until the user starts another one.
 ///
-/// The shell runs typed input in its own time, so right after a launch its reports still
-/// describe whatever it did before (nothing, the setup's `clear`, the `cd`). Until it
-/// reports starting the launched command, the launch itself is the truth: `command` and
-/// `working_dir` are what the terminal is about to run, and where.
+/// While it is pending, the launch itself is what the terminal runs (or last ran):
+/// `command` is the whole line and `working_dir` where it was started. The shell's own
+/// reports cannot say that:
+/// - Right after a launch they still describe whatever the shell did before (nothing, the
+///   setup's `clear`, the `cd`), because the shell runs typed input in its own time.
+/// - Once it runs, bash's DEBUG trap only reports one simple command at a time, so
+///   `make && ./serve` would be reported as `make`, then `./serve`.
 ///
-/// The shell reports `133;L;<id>` right before the launched command line, so the first
-/// `133;C` after it is that command, and from then on the shell's reports are current.
+/// The shell reports `133;L;<id>` right before the launched line, so the first `133;C`
+/// after it is the line starting, and the next prompt (`133;A`) means it has finished.
+/// A `133;C` after that is a new command the user typed: from then on the shell's reports
+/// are current. A launch without a command hands over as soon as the user starts one.
 struct PendingLaunch {
     id: u64,
     command: String,
     working_dir: String,
     /// The shell reported `133;L;<id>`.
     reached: bool,
+    /// The launched line started running (a `133;C` after `reached`).
+    started: bool,
+    /// The launched line finished (a prompt, `133;A`, after `started`).
+    finished: bool,
 }
 
 impl ShellState {
@@ -150,11 +161,22 @@ impl Callbacks for ShellHooks {
         match (params.get(1).copied(), value) {
             (Some(b"C"), Some(command)) => {
                 let mut state = self.state.lock().unwrap();
-                if state.launch.as_ref().is_some_and(|launch| launch.reached) {
-                    // This is the launched command starting: the reports are current now.
-                    state.launch = None;
+                match state.launch.as_mut() {
+                    // A command the user started: after the launched line finished, or
+                    // instead of one when nothing was launched. It takes over.
+                    Some(launch) if launch.finished || (launch.reached && launch.command.is_empty()) => {
+                        state.launch = None;
+                    }
+                    Some(launch) if launch.reached => launch.started = true,
+                    _ => {}
                 }
                 state.reported_command = command;
+            }
+            (Some(b"A"), _) => {
+                // Back at the prompt: the launched line has finished.
+                if let Some(launch) = self.state.lock().unwrap().launch.as_mut().filter(|l| l.started) {
+                    launch.finished = true;
+                }
             }
             (Some(b"P"), Some(pwd)) => self.state.lock().unwrap().reported_pwd = pwd,
             (Some(b"L"), Some(id)) => {
@@ -333,6 +355,8 @@ impl VirtualTerminal {
             command: command.clone().unwrap_or_default(),
             working_dir: working_dir.to_owned(),
             reached: false,
+            started: false,
+            finished: false,
         });
 
         self.execute_command(format!("cd {working_dir} && clear && __osc133_launch {id}"));

@@ -4,7 +4,7 @@ use std::fs;
 
 use clap::{CommandFactory, Parser, error::ErrorKind};
 use daemon_test::cli::{
-    Cli, Commands, DaemonCommands, ServiceCommands, generate_random_name, session_name_from_config, session_not_found_message,
+    Cli, Commands, DaemonCommands, ServiceCommands, command_line, generate_random_name, session_name_from_config, session_not_found_message,
     shell_join, shell_quote,
 };
 use tracing::level_filters::LevelFilter;
@@ -191,6 +191,26 @@ fn shell_join_round_trips_through_a_shell() {
 
     let out = std::process::Command::new("sh").args(["-c", &line]).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&out.stdout), "a b|it's||$HOME|*|");
+}
+
+fn strings(args: &[&str]) -> Vec<String> {
+    args.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn a_single_argument_is_a_command_line_and_runs_as_one() {
+    let line = command_line(&strings(&["echo hello && echo world"]));
+    assert_eq!(line, "echo hello && echo world");
+
+    let out = std::process::Command::new("sh").args(["-c", &line]).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "hello\nworld\n");
+}
+
+#[test]
+fn several_arguments_are_passed_on_exactly() {
+    assert_eq!(command_line(&strings(&["sh", "-c", "sleep 300"])), "sh -c 'sleep 300'");
+    // Shell syntax in one of several arguments stays literal.
+    assert_eq!(command_line(&strings(&["echo", "a && b"])), "echo 'a && b'");
 }
 
 #[test]

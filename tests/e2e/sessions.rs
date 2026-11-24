@@ -144,3 +144,24 @@ fn session_names_are_matched_ignoring_case() {
     assert!(out.contains("Killed session: webserver"), "got: {out}");
     assert!(h.sessions().is_empty());
 }
+
+#[test]
+fn run_with_one_argument_runs_it_as_a_shell_command_line() {
+    let h = Harness::new();
+    let proof = h.dir.path().join("proof.txt");
+    let line = format!("echo hello && echo world > {}; sleep 300", proof.display());
+    h.ok(&["run", "-n", "compound", &line]);
+
+    // The whole line ran: `echo world` only runs after `echo hello` succeeded.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::fs::read_to_string(&proof).unwrap_or_default() != "world\n" {
+        assert!(std::time::Instant::now() < deadline, "the command line never ran");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    // And the session remembers the whole line, not just the part running now.
+    let (_, yaml) = h.export("compound", &h.dir.path().join("export"));
+    let session: daemon_test::backend::yaml::models::YamlSession =
+        serde_yaml::from_str(&yaml).unwrap();
+    assert_eq!(session.windows[0].command, line);
+}
