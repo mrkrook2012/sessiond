@@ -22,9 +22,13 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use crate::backend::session_manager::SessionId;
 use crate::backend::terminal_manager::TerminalId;
 use crate::backend::window_manager::WindowId;
+use crate::frontend::session_list::{
+    action_done, action_in_progress, is_service_key, new_session, reselect, service_action_for_key,
+    service_keys, sort_sessions,
+};
 use crate::frontend::slop_terrm_widget::TerminalWidget;
 use crate::ipc::client::DaemonClient;
-use crate::ipc::protocol::{SessionInfo, WindowInfo};
+use crate::ipc::protocol::{SessionInfo, SysdAction, SysdData, WindowInfo};
 
 // Fallback size used only if we somehow can't read the real terminal
 // dimensions at startup (e.g. `terminal.size()` fails).
@@ -38,6 +42,9 @@ const POLL_IDLE: Duration = Duration::from_millis(50);
 const POLL_EMPTY_BACKOFF: Duration = Duration::from_millis(10);
 /// How long the poller sleeps after an RPC error.
 const POLL_ERROR_BACKOFF: Duration = Duration::from_millis(250);
+/// How often the session list is refreshed, so service states changed elsewhere (systemctl,
+/// a tracked command restarting its service, another client) show up on their own.
+const LIST_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Which screen is currently visible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,6 +107,13 @@ enum Command {
     ExportSessionToFile {
         id: SessionId,
         working_dir: PathBuf,
+    },
+    /// Start / stop / restart / enable / disable a systemd session.
+    SysdAction {
+        id: SessionId,
+        /// For the status line.
+        name: String,
+        action: SysdAction,
     },
 }
 
@@ -214,7 +228,10 @@ impl AppState {
     /// windowless, there's nothing left to show on the terminal screen, so
     /// fall back to the list. Otherwise just pick up the (possibly
     /// changed) window set.
-    fn apply_session_list(&mut self, sessions: Vec<SessionInfo>) {
+    ///
+    /// The list is kept sorted, and the cursor stays on the session it was on, so a
+    /// refresh never moves it onto a different session.
+    fn apply_session_list(&mut self, mut sessions: Vec<SessionInfo>) {
         let refreshed_current = self.current_session.as_ref().and_then(|current| {
             sessions
                 .iter()
@@ -222,10 +239,10 @@ impl AppState {
                 .cloned()
         });
 
+        let selected = self.selected_session().map(|session| session.id);
+        sort_sessions(&mut sessions);
+        self.session_list_index = reselect(&sessions, selected, self.session_list_index);
         self.sessions = sessions;
-        if self.session_list_index >= self.sessions.len() {
-            self.session_list_index = self.sessions.len().saturating_sub(1);
-        }
 
         match refreshed_current {
             Some(session) if !session.windows_info.is_empty() => {
@@ -375,10 +392,11 @@ async fn handle_command(
         }
 
         Command::CreateSession { working_dir, name } => {
+            let before: Vec<SessionId> =
+                state.lock().unwrap().sessions.iter().map(|s| s.id).collect();
             let sessions = client.create_session(working_dir, None, Some(name)).await?;
-            // The RPC only returns the list. Assumption: the new session
-            // is the last entry; open it like the old UpdatedSession flow.
-            let newest = sessions.last().map(|s| s.id);
+            // The RPC only returns the list: the new session is the one that was not there before.
+            let newest = new_session(&before, &sessions);
             state.lock().unwrap().apply_session_list(sessions);
             if let Some(id) = newest {
                 let info = client.open_session(id).await?;
@@ -450,8 +468,32 @@ async fn handle_command(
             let path = client.export_session_to_file(id, working_dir).await?;
             state.lock().unwrap().status = format!("Exported to {}", path.display());
         }
+
+        Command::SysdAction { id, name, action } => {
+            // The reply only says systemd accepted the job; the state the list shows catches
+            // up as the unit actually starts or stops (see `run_list_refresher`).
+            let sessions = client.execute_sysd_action(id, action).await?;
+            let mut st = state.lock().unwrap();
+            st.apply_session_list(sessions);
+            st.status = format!("{} service '{name}'", action_done(action));
+        }
     }
     Ok(())
+}
+
+/// Refreshes the session list every `LIST_REFRESH_INTERVAL` until the UI quits.
+///
+/// Goes through the worker queue like every other request, so a refresh can never
+/// overtake (or be overtaken by) an action the user just took.
+async fn run_list_refresher(state: Arc<Mutex<AppState>>, tx: UnboundedSender<Command>) {
+    let mut interval = tokio::time::interval(LIST_REFRESH_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        interval.tick().await;
+        if state.lock().unwrap().should_quit || tx.send(Command::ListSessions).is_err() {
+            break;
+        }
+    }
 }
 
 /// Queue raw bytes for the currently visible terminal (no-op if none).
@@ -510,9 +552,8 @@ pub async fn run_frontend() -> Result<()> {
 
     tokio::spawn(run_worker(client.clone(), state.clone(), cmd_rx));
     tokio::spawn(run_terminal_poller(client.clone(), state.clone()));
-
-    // Kick things off on the session-list screen.
-    let _ = cmd_tx.send(Command::ListSessions);
+    // The first tick fires immediately, which also loads the list on start.
+    tokio::spawn(run_list_refresher(state.clone(), cmd_tx.clone()));
 
     // -------- draw / input loop (blocking, on its own thread) --------
     let ui_state = state.clone();
@@ -722,8 +763,21 @@ pub async fn run_frontend() -> Result<()> {
                                     st.input_mode = InputMode::NewSessionName(String::new());
                                 }
                                 KeyCode::Enter | KeyCode::Char('o') => {
-                                    if let Some(session) = st.selected_session() {
-                                        send(Command::OpenSession { id: session.id });
+                                    match st.selected_session() {
+                                        // A stopped service has no windows to show.
+                                        Some(SessionInfo {
+                                            name,
+                                            sysd_data: Some(SysdData { running: false, .. }),
+                                            ..
+                                        }) => {
+                                            st.status = format!(
+                                                "Service '{name}' is stopped, press s to start it"
+                                            );
+                                        }
+                                        Some(session) => {
+                                            send(Command::OpenSession { id: session.id });
+                                        }
+                                        None => {}
                                     }
                                 }
                                 KeyCode::Char('x') | KeyCode::Char('d') => {
@@ -734,13 +788,47 @@ pub async fn run_frontend() -> Result<()> {
                                         send(Command::KillSession { id: session.id });
                                     }
                                 }
-                                // e: export the selected session to a systemd
-                                // unit.
-                                KeyCode::Char('e') => {
-                                    if let Some(session) = st.selected_session() {
+                                // e: turn the selected (non-service) session into
+                                // a systemd service.
+                                KeyCode::Char('e') => match st.selected_session() {
+                                    Some(session) if session.sysd_data.is_some() => {
+                                        st.status = format!(
+                                            "'{}' already is a systemd service",
+                                            session.name
+                                        );
+                                    }
+                                    Some(session) => {
                                         let id = session.id;
                                         st.status = "Exporting session to systemd...".to_owned();
                                         send(Command::ExportSessionToSysd { id });
+                                    }
+                                    None => {}
+                                },
+                                // s / R / a: systemd operations. Only systemd
+                                // sessions offer them, and only the ones that fit
+                                // the state on screen (see `service_keys`).
+                                KeyCode::Char(c) if is_service_key(c) => {
+                                    let Some(session) = st.selected_session() else {
+                                        continue;
+                                    };
+                                    match service_action_for_key(session, c) {
+                                        Some(action) => {
+                                            let (id, name) = (session.id, session.name.clone());
+                                            st.status = format!(
+                                                "{} service '{name}'...",
+                                                action_in_progress(action)
+                                            );
+                                            send(Command::SysdAction { id, name, action });
+                                        }
+                                        None if session.sysd_data.is_none() => {
+                                            st.status = format!(
+                                                "'{}' is not a systemd service (press e to turn it into one)",
+                                                session.name
+                                            );
+                                        }
+                                        // A service key that does not apply in this
+                                        // state, like restart on a stopped service.
+                                        None => {}
                                     }
                                 }
                                 // f: export the selected session to a file in
@@ -864,8 +952,104 @@ pub async fn run_frontend() -> Result<()> {
 // Rendering
 // ---------------------------------------------------------------------
 
+/// The session list's layout: like `screen_layout`, but with a two-line keybind bar
+/// (actions for the selected session, then the general ones).
+fn session_list_layout(area: Rect) -> std::rc::Rc<[Rect]> {
+    Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(1),
+            Constraint::Length(4),
+        ])
+        .split(area)
+}
+
+/// A key in a keybind bar, followed by what it does.
+fn keybind(key: impl Into<String>, label: impl Into<String>) -> [Span<'static>; 2] {
+    [
+        Span::styled(
+            format!(" {} ", key.into()),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(format!("{}  ", label.into())),
+    ]
+}
+
+/// "● running" / "○ stopped" and "autostart on" / "autostart off", coloured.
+fn service_state_spans(sysd: SysdData) -> [Span<'static>; 2] {
+    let running = if sysd.running {
+        Span::styled("● running", Style::default().fg(Color::Green))
+    } else {
+        Span::styled("○ stopped", Style::default().fg(Color::DarkGray))
+    };
+    let autostart = if sysd.enabled {
+        Span::styled("autostart on", Style::default().fg(Color::Cyan))
+    } else {
+        Span::styled("autostart off", Style::default().fg(Color::DarkGray))
+    };
+    [running, autostart]
+}
+
+/// One row of the session list: name, kind and state, window count.
+fn session_row(session: &SessionInfo, name_width: usize) -> Line<'static> {
+    let mut spans = vec![Span::raw(format!("{:<name_width$}  ", session.name))];
+
+    match session.sysd_data {
+        Some(sysd) => {
+            let [running, autostart] = service_state_spans(sysd);
+            spans.push(Span::styled("service  ", Style::default().fg(Color::Magenta)));
+            spans.push(running);
+            spans.push(Span::raw("  "));
+            spans.push(autostart);
+        }
+        None => spans.push(Span::styled("session", Style::default().fg(Color::Blue))),
+    }
+
+    // A stopped service has no windows; saying "0 windows" there would just be noise.
+    let windows = session.windows_info.len();
+    if windows > 0 {
+        let plural = if windows == 1 { "" } else { "s" };
+        spans.push(Span::styled(
+            format!("  {windows} window{plural}"),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    Line::from(spans)
+}
+
+/// The keys that apply to the selected session. Service operations only appear for
+/// systemd sessions, and only those that fit the state shown (see `service_keys`).
+fn selected_session_keybinds(session: Option<&SessionInfo>) -> Line<'static> {
+    let Some(session) = session else {
+        return Line::from(Span::styled(
+            " No sessions yet",
+            Style::default().fg(Color::DarkGray),
+        ));
+    };
+
+    let mut spans = Vec::new();
+    match session.sysd_data {
+        Some(sysd) => {
+            if sysd.running {
+                spans.extend(keybind("o/Enter", "open"));
+            }
+            for service_key in service_keys(sysd) {
+                spans.extend(keybind(service_key.key, service_key.label));
+            }
+        }
+        None => {
+            spans.extend(keybind("o/Enter", "open"));
+            spans.extend(keybind("e", "make service"));
+        }
+    }
+    spans.extend(keybind("f", "export file"));
+    spans.extend(keybind("x/d", "kill"));
+    Line::from(spans)
+}
+
 fn draw_session_list(frame: &mut ratatui::Frame, area: Rect, st: &AppState) {
-    let chunks = screen_layout(area);
+    let chunks = session_list_layout(area);
 
     // The status is shown in the title bar so export results (and errors)
     // are actually visible.
@@ -882,17 +1066,16 @@ fn draw_session_list(frame: &mut ratatui::Frame, area: Rect, st: &AppState) {
             .block(Block::default().borders(Borders::ALL).title("New Session"));
         frame.render_widget(input, chunks[1]);
     } else {
+        let name_width = st
+            .sessions
+            .iter()
+            .map(|s| s.name.chars().count())
+            .max()
+            .unwrap_or(0);
         let items: Vec<ListItem> = st
             .sessions
             .iter()
-            .map(|s| {
-                ListItem::new(format!(
-                    "{} (id {:?}, {} window(s))",
-                    s.name,
-                    s.id,
-                    s.windows_info.len()
-                ))
-            })
+            .map(|s| ListItem::new(session_row(s, name_width)))
             .collect();
 
         let mut list_state = ListState::default();
@@ -908,23 +1091,17 @@ fn draw_session_list(frame: &mut ratatui::Frame, area: Rect, st: &AppState) {
         frame.render_stateful_widget(list, chunks[1], &mut list_state);
     }
 
-    let keybinds = Line::from(vec![
-        Span::styled(" n ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw("new  "),
-        Span::styled(" o/Enter ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw("open  "),
-        Span::styled(" x/d ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw("kill  "),
-        Span::styled(" e ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw("export sysd  "),
-        Span::styled(" f ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw("export file  "),
-        Span::styled(" r ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw("refresh  "),
-        Span::styled(" q ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw("quit"),
-    ]);
-    let bar = Paragraph::new(keybinds).block(Block::default().borders(Borders::ALL));
+    let general = Line::from(
+        [
+            keybind("n", "new"),
+            keybind("j/k", "move"),
+            keybind("r", "refresh"),
+            keybind("q", "quit"),
+        ]
+        .concat(),
+    );
+    let bar = Paragraph::new(vec![selected_session_keybinds(st.selected_session()), general])
+        .block(Block::default().borders(Borders::ALL));
     frame.render_widget(bar, chunks[2]);
 }
 
@@ -945,16 +1122,20 @@ fn draw_terminal_screen(frame: &mut ratatui::Frame, area: Rect, st: &AppState) {
         })
         .unwrap_or_default();
 
-    let name = st
-        .current_session
-        .as_ref()
-        .map_or("", |s| s.name.as_str());
+    let mut title = vec![Span::raw(format!(
+        "Session: {} ",
+        st.current_session.as_ref().map_or("", |s| s.name.as_str())
+    ))];
+    if let Some(sysd) = st.current_session.as_ref().and_then(|s| s.sysd_data) {
+        let [running, autostart] = service_state_spans(sysd);
+        title.extend([Span::raw("[service "), running, Span::raw(", "), autostart, Span::raw("] ")]);
+    }
 
     let tabs = Tabs::new(titles)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(format!("Session: {name}")),
+                .title(Line::from(title)),
         )
         .select(st.current_window_index)
         .highlight_style(

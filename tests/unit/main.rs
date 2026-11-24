@@ -5,5 +5,4 @@
 
 mod backend;
 mod cli;
-mod frontend;
 mod support;

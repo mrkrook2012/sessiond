@@ -19,6 +19,7 @@ todo:
   - Fish hints integration V
   - Clean up CLI V
   - Clean logging V
+  - Improve frontend to actualy differentiate between sysd and non sysd sessions
   - Think of an actual name
   - Simple .deb release pipeline V
   - Multi user 

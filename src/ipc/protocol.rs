@@ -123,7 +123,7 @@ pub enum SysdWaitStatus {
     Ended,
 }
 
-#[derive(Decode, Encode, Debug, Serialize, serde::Deserialize)]
+#[derive(Decode, Encode, Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub enum SysdAction {
     Start,
     Stop,
@@ -167,7 +167,7 @@ pub struct SessionInfo {
     pub sysd_data: Option<SysdData>, // maybe improve later
 }
 
-#[derive(Decode, Encode, Debug, Clone, Serialize, serde::Deserialize)]
+#[derive(Decode, Encode, Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct SysdData {
     pub enabled: bool,
     pub running: bool,
