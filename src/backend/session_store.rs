@@ -1,6 +1,7 @@
 use std::path::PathBuf;
  
 use crate::backend::session_manager::UnitName;
+use crate::backend::systemd_manager::SystemdManager;
 use crate::backend::systemd_service_manager::SystemdServiceManager;
 use crate::backend::yaml::models::YamlSession;
 use crate::backend::yaml::yaml_manager::YamlManager;
@@ -85,11 +86,33 @@ impl SessionStore {
         Ok(found)
     }
 
-    /// Removes both the unit file and the YAML file.
-    pub fn delete(&mut self, name: &str) -> Result<()> {
-        self.systemd_manager.remove_sysd_service_file(name)?;
-        self.yaml_manager.delete_session(name)?;
-        Ok(())
+    pub fn unit_file_exists(&self, unit: &UnitName) -> bool {
+        self.systemd_manager.unit_file_exists(unit)
+    }
+
+    /// Removes the unit file and every YAML file of this session. Files that are already
+    /// gone are skipped, so a half-deleted session can still be cleaned up.
+    /// Returns the files that were removed.
+    pub fn delete(&mut self, unit: &UnitName) -> Result<Vec<PathBuf>> {
+        let mut files = self.yaml_manager.find_session_files(&unit.to_string())?;
+        if self.systemd_manager.unit_file_exists(unit) {
+            files.push(SystemdManager::unit_file_path(&unit.to_string())?);
+        }
+
+        for file in &files {
+            match std::fs::remove_file(file) {
+                Ok(()) => println!("Deleted {}", file.display()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    return Err(color_eyre::eyre::eyre!(
+                        "Failed to delete {}: {e}",
+                        file.display()
+                    ));
+                }
+            }
+        }
+
+        Ok(files)
     }
 }
 

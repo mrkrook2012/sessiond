@@ -1,60 +1,94 @@
-use portable_pty::{Child, PtyPair, PtySize, PtySystem, native_pty_system};
+use portable_pty::{Child, MasterPty, PtyPair, PtySize, native_pty_system};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex, RwLock};
-use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use tokio::sync::mpsc::UnboundedSender;
 use vt100::{Callbacks, Parser};
 
 use crate::backend::terminal_manager::TerminalId;
 
-pub struct Caller {
-    current_command: Arc<RwLock<String>>,
-    current_pwd: Arc<RwLock<String>>,
+/// Lines of scrollback kept by the parser.
+const SCROLLBACK: usize = 20;
+/// How long to wait for the shell to draw its first prompt.
+const SHELL_STARTUP_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long the shell gets to exit after SIGHUP/SIGTERM before it is SIGKILLed.
+const TERMINATE_GRACE: Duration = Duration::from_millis(500);
+
+/// Injected into every shell. Reports the running command and directory through
+/// OSC 133 sequences, and the exit code of a *tracked* command through `133;T`.
+///
+/// A tracked command is typed as `__osc133_track; <command>`. The prompt hook runs
+/// first in PROMPT_COMMAND so it still sees the command's `$?`, and only reports once
+/// per tracked command. Ctrl+C aborts the rest of the line, but the prompt hook still runs.
+const SHELL_SETUP: &str = r#"
+__osc133_command_start() {
+    case "$BASH_COMMAND" in
+        __osc133_*|printf*|local*|trap*|PROMPT_COMMAND*)
+            return
+            ;;
+    esac
+
+    printf '\033]133;P;%s\007' "$PWD"
+    printf '\033]133;C;%s\007' "$BASH_COMMAND"
+}
+__osc133_track() { __osc133_tracking=1; }
+__osc133_prompt() {
+    local status=$?
+    if [ -n "$__osc133_tracking" ]; then
+        unset __osc133_tracking
+        printf '\033]133;T;%s\007' "$status"
+    fi
+}
+trap '__osc133_command_start' DEBUG
+PROMPT_COMMAND="__osc133_prompt${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+clear
+"#;
+
+/// Things that happen inside a terminal that the rest of the daemon cares about.
+#[derive(Debug, Clone, Copy)]
+pub enum TerminalEvent {
+    /// A command started with `VirtualTerminal::run_tracked` returned to the prompt.
+    TrackedCommandExited { terminal_id: TerminalId, code: i32 },
 }
 
-impl Callbacks for Caller {
+/// vt100 callbacks: picks our OSC 133 sequences out of the output stream.
+struct ShellHooks {
+    terminal_id: TerminalId,
+    current_command: Arc<RwLock<String>>,
+    current_pwd: Arc<RwLock<String>>,
+    events: UnboundedSender<TerminalEvent>,
+}
+
+impl Callbacks for ShellHooks {
     fn unhandled_osc(&mut self, _screen: &mut vt100::Screen, params: &[&[u8]]) {
         if params.first() != Some(&b"133".as_slice()) {
             return;
         }
+        let value = params.get(2).map(|v| String::from_utf8_lossy(v).into_owned());
 
-        match params.get(1).copied() {
-            Some(b"A") => {
-                println!("prompt started");
+        match (params.get(1).copied(), value) {
+            (Some(b"C"), Some(command)) => *self.current_command.write().unwrap() = command,
+            (Some(b"P"), Some(pwd)) => *self.current_pwd.write().unwrap() = pwd,
+            (Some(b"T"), Some(code)) => {
+                let code = code.trim().parse().unwrap_or(-1);
+                // The receiver only disappears when the daemon is shutting down.
+                let _ = self.events.send(TerminalEvent::TrackedCommandExited {
+                    terminal_id: self.terminal_id,
+                    code,
+                });
             }
-
-            Some(b"B") => {
-                println!("command input started");
-            }
-
-            Some(b"C") => {
-                if let Some(cmd) = params.get(2).map(|v| String::from_utf8_lossy(v)) {
-                    *self.current_command.write().unwrap() = cmd.clone().into_owned();
-                    println!("command execution started: {:?}", cmd);
-                }
-            }
-
-            Some(b"D") => {
-                println!("command finished");
-            }
-
-            Some(b"P") => {
-                if let Some(pwd) = params.get(2).map(|v| String::from_utf8_lossy(v)) {
-                    *self.current_pwd.write().unwrap() = pwd.clone().into_owned();
-                    println!("command pwd: {:?}", pwd);
-                }
-            }
-
             _ => {}
         }
     }
 }
 
+/// A bash shell running in a PTY, with its screen parsed by vt100.
 pub struct VirtualTerminal {
     id: TerminalId,
-    parser: Arc<Mutex<Parser<Caller>>>,
+    parser: Arc<Mutex<Parser<ShellHooks>>>,
     pair: PtyPair,
-    child: Box<dyn Child + Send + Sync>,
+    /// Taken in `Drop` and handed to a reaper thread.
+    child: Option<Box<dyn Child + Send + Sync>>,
     writer: Box<dyn Write + Send>,
     width_factor: f32,
     height_factor: f32,
@@ -62,97 +96,59 @@ pub struct VirtualTerminal {
     global_cols: u16,
     current_command: Arc<RwLock<String>>,
     current_pwd: Arc<RwLock<String>>,
+    /// When the user last typed into this terminal. Used to tell a manual stop from a crash.
+    last_user_input: Option<Instant>,
 }
 
 impl VirtualTerminal {
-    pub fn new(id: TerminalId, global_rows: u16, global_cols: u16) -> Self {
-        let pty_system = native_pty_system();
-
-        let pair = pty_system
+    pub fn new(
+        id: TerminalId,
+        global_rows: u16,
+        global_cols: u16,
+        events: UnboundedSender<TerminalEvent>,
+    ) -> Self {
+        let pair = native_pty_system()
             .openpty(PtySize {
                 rows: global_rows,
                 cols: global_cols,
                 pixel_height: 0,
                 pixel_width: 0,
             })
-            .unwrap();
+            .expect("failed to open pty");
 
         let child = pair
             .slave
             .spawn_command(portable_pty::CommandBuilder::new("/bin/bash"))
-            .unwrap();
+            .expect("failed to spawn shell");
 
-        let mut writer = pair.master.take_writer().unwrap();
+        let writer = pair.master.take_writer().expect("failed to take pty writer");
 
         let current_command = Arc::new(RwLock::new(String::new()));
         let current_pwd = Arc::new(RwLock::new(String::new()));
 
-        let caller = Caller {
+        let hooks = ShellHooks {
+            terminal_id: id,
             current_command: Arc::clone(&current_command),
             current_pwd: Arc::clone(&current_pwd),
+            events,
         };
-
         let parser = Arc::new(Mutex::new(Parser::new_with_callbacks(
             global_rows,
             global_cols,
-            20,
-            caller,
+            SCROLLBACK,
+            hooks,
         )));
 
-        let reader = pair.master.try_clone_reader().unwrap();
-        let parser2 = Arc::clone(&parser);
+        spawn_reader(
+            pair.master.try_clone_reader().expect("failed to clone pty reader"),
+            Arc::clone(&parser),
+        );
 
-        tokio::task::spawn_blocking(move || {
-            let mut reader = reader;
-            let mut buffer = [0u8; 8192];
-
-            loop {
-                match reader.read(&mut buffer) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        parser2.lock().unwrap().process(&buffer[..n]);
-                    }
-                    Err(e) => {
-                        eprintln!("PTY read error: {e}");
-                        break;
-                    }
-                }
-            }
-        });
-
-        while parser.lock().unwrap().screen().contents() == "" {
-            sleep(Duration::from_millis(20));
-        }
-
-        println!("Injecting bash hooks");
-
-        let setup = r#"
-        __osc133_command_start() {
-            case "$BASH_COMMAND" in
-                __osc133_*|printf*|local*|trap*|PROMPT_COMMAND*)
-                    return
-                    ;;
-            esac
-
-            printf '\033]133;P;%s\007' "$PWD"
-            printf '\033]133;C;%s\007' "$BASH_COMMAND"
-        }
-
-        trap '__osc133_command_start' DEBUG
-        "#;
-
-        writer.write_all(setup.as_bytes()).unwrap();
-        writer.write_all(b"\n").unwrap();
-        writer.flush().unwrap();
-
-        writer.write_all(b"clear\n").unwrap();
-        writer.flush().unwrap();
-
-        Self {
+        let mut terminal = Self {
             id,
             parser,
             pair,
-            child,
+            child: Some(child),
             writer,
             width_factor: 1.0,
             height_factor: 1.0,
@@ -160,6 +156,34 @@ impl VirtualTerminal {
             global_cols,
             current_command,
             current_pwd,
+            last_user_input: None,
+        };
+
+        terminal.wait_for_first_output();
+        terminal.write(SHELL_SETUP.as_bytes());
+
+        terminal
+    }
+
+    /// Input typed in shell before its rc files ran can get lost, so wait until it drew something.
+    fn wait_for_first_output(&self) {
+        let deadline = Instant::now() + SHELL_STARTUP_TIMEOUT;
+        while self.parser.lock().unwrap().screen().contents().is_empty() {
+            if Instant::now() >= deadline {
+                eprintln!("Terminal {:?}: shell printed nothing during startup", self.id);
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        let result = self
+            .writer
+            .write_all(bytes)
+            .and_then(|_| self.writer.flush());
+        if let Err(e) = result {
+            eprintln!("Terminal {:?}: write failed: {e}", self.id);
         }
     }
 
@@ -167,14 +191,23 @@ impl VirtualTerminal {
         self.id
     }
 
+    /// Keystrokes from a user.
     pub fn process_input(&mut self, bytes: &[u8]) {
-        self.writer.write_all(bytes).unwrap();
+        self.last_user_input = Some(Instant::now());
+        self.write(bytes);
+    }
+
+    pub fn last_user_input(&self) -> Option<Instant> {
+        self.last_user_input
     }
 
     pub fn execute_command(&mut self, command: String) {
-        self.writer.write_all(command.as_bytes()).unwrap();
-        self.writer.write_all(b"\r").unwrap();
-        self.writer.flush().unwrap();
+        self.write(format!("{command}\r").as_bytes());
+    }
+
+    /// Runs `command`, and emits `TrackedCommandExited` once it returns to the prompt.
+    pub fn run_tracked(&mut self, command: String) {
+        self.execute_command(format!("__osc133_track; {command}"));
     }
 
     pub fn get_screen(&self) -> Vec<u8> {
@@ -182,11 +215,11 @@ impl VirtualTerminal {
     }
 
     pub fn get_current_command(&self) -> String {
-        self.current_command.read().unwrap().to_string()
+        self.current_command.read().unwrap().clone()
     }
 
     pub fn get_current_pwd(&self) -> String {
-        self.current_pwd.read().unwrap().to_string()
+        self.current_pwd.read().unwrap().clone()
     }
 
     pub fn get_ratio(&self) -> (f32, f32) {
@@ -218,120 +251,142 @@ impl VirtualTerminal {
             .screen_mut()
             .set_size(rows, cols);
 
-        self.pair
-            .master
-            .resize(PtySize {
-                rows,
-                cols,
-                pixel_height: 0,
-                pixel_width: 0,
-            })
-            .unwrap();
+        let result = self.pair.master.resize(PtySize {
+            rows,
+            cols,
+            pixel_height: 0,
+            pixel_width: 0,
+        });
+        if let Err(e) = result {
+            eprintln!("Terminal {:?}: resize failed: {e}", self.id);
+        }
     }
+}
+
+/// Feeds PTY output into the parser until the PTY closes.
+fn spawn_reader(mut reader: Box<dyn Read + Send>, parser: Arc<Mutex<Parser<ShellHooks>>>) {
+    std::thread::spawn(move || {
+        let mut buffer = [0u8; 8192];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(n) => parser.lock().unwrap().process(&buffer[..n]),
+                // EIO is how Linux reports that the other side of the PTY is gone.
+                Err(_) => break,
+            }
+        }
+    });
 }
 
 impl Drop for VirtualTerminal {
     fn drop(&mut self) {
-        println!("Dropping VirtualTerminal {:?}", self.id);
-
-        terminate_process_tree(&mut *self.child, &*self.pair.master);
-
-        println!("VirtualTerminal {:?} terminated", self.id);
+        if let Some(child) = self.child.take() {
+            terminate(self.id, child, &*self.pair.master);
+        }
     }
 }
 
-/// Terminates the PTY session and its foreground process group.
+/// Stops the shell and everything running in it, without blocking the caller.
 ///
-/// portable-pty creates the shell as a session leader on Unix.
-/// Interactive shells may put foreground jobs into separate
-/// process groups, so we terminate both.
-#[cfg(unix)]
-fn terminate_process_tree(child: &mut dyn Child, master: &dyn portable_pty::MasterPty) {
-    use std::collections::BTreeSet;
-    use std::os::fd::RawFd;
+/// The shell is the session leader of the PTY; a running command lives in its own
+/// (foreground) process group. Both get SIGHUP + SIGTERM now, and a reaper thread
+/// SIGKILLs whatever is left after a grace period and then reaps the shell, so no
+/// zombies are left behind and the daemon never waits on a slow process.
+fn terminate(id: TerminalId, mut child: Box<dyn Child + Send + Sync>, master: &dyn MasterPty) {
+    let mut groups: Vec<libc::pid_t> = Vec::new();
 
-    fn signal_group(pgid: libc::pid_t, signal: libc::c_int) {
-        if pgid <= 0 {
-            return;
+    // Note: `master.process_group_leader()` returns the *foreground* group, which is
+    // the running command rather than the shell. The shell is the child itself.
+    if let Some(shell) = child.process_id().map(|pid| pid as libc::pid_t) {
+        groups.push(shell);
+
+        if let Some(foreground) = master.process_group_leader() {
+            // Only touch groups that belong to this terminal's session.
+            if foreground != shell && unsafe { libc::getsid(foreground) == libc::getsid(shell) } {
+                groups.push(foreground);
+            }
+        }
+    }
+
+    // An interactive bash ignores SIGTERM but exits on SIGHUP (and forwards it to its jobs).
+    signal_groups(&groups, libc::SIGHUP);
+    signal_groups(&groups, libc::SIGTERM);
+
+    std::thread::spawn(move || {
+        let deadline = Instant::now() + TERMINATE_GRACE;
+        while Instant::now() < deadline {
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                // The shell is gone; make sure its command is too.
+                signal_groups(&groups, libc::SIGKILL);
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
         }
 
-        // Negative PID means signal the entire process group.
-        let result = unsafe { libc::kill(-pgid, signal) };
+        signal_groups(&groups, libc::SIGKILL);
+        if let Err(e) = child.wait() {
+            eprintln!("Terminal {id:?}: failed to reap shell: {e}");
+        }
+    });
+}
 
-        if result != 0 {
+fn signal_groups(groups: &[libc::pid_t], signal: libc::c_int) {
+    for &pgid in groups {
+        if pgid <= 0 {
+            continue;
+        }
+        // A negative pid signals the whole process group.
+        if unsafe { libc::kill(-pgid, signal) } != 0 {
             let error = std::io::Error::last_os_error();
-
-            // ESRCH means the process group has already exited.
+            // ESRCH: the group is already gone.
             if error.raw_os_error() != Some(libc::ESRCH) {
                 eprintln!("Failed to signal process group {pgid}: {error}");
             }
         }
     }
-
-    // The PTY child is the session/process-group leader.
-    let leader = master
-        .process_group_leader()
-        .or_else(|| child.process_id().map(|pid| pid as libc::pid_t));
-
-    let Some(leader) = leader else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return;
-    };
-
-    // Find the foreground process group attached to the PTY.
-    let foreground = master.as_raw_fd().and_then(|fd: RawFd| {
-        let pgid = unsafe { libc::tcgetpgrp(fd) };
-
-        if pgid > 0 { Some(pgid) } else { None }
-    });
-
-    // Only signal groups belonging to this terminal's session.
-    let session_id = unsafe { libc::getsid(leader) };
-
-    let mut groups = BTreeSet::new();
-    groups.insert(leader);
-
-    if let Some(pgid) = foreground {
-        if pgid > 0 && unsafe { libc::getsid(pgid) } == session_id {
-            groups.insert(pgid);
-        }
-    }
-
-    println!(
-        "Terminating PTY session {leader}, process groups: {:?}",
-        groups
-    );
-
-    eprintln!("before SIGTERM");
-    for pgid in &groups {
-        eprintln!("SIGTERM pgid={pgid}");
-        unsafe { libc::kill(-*pgid, libc::SIGTERM) };
-    }
-
-    eprintln!("before grace period");
-    std::thread::sleep(Duration::from_millis(300));
-
-    eprintln!("before SIGKILL");
-    for pgid in &groups {
-        eprintln!("SIGKILL pgid={pgid}");
-        unsafe { libc::kill(-*pgid, libc::SIGKILL) };
-    }
-
-    eprintln!("before child.wait");
-    //let result = child.wait();
-    //eprintln!("after child.wait: {result:?}");
 }
 
-/// Windows fallback: portable-pty kills the direct child.
-/// It does not guarantee termination of all descendants.
-#[cfg(not(unix))]
-fn terminate_process_tree(child: &mut dyn Child, _master: &dyn portable_pty::MasterPty) {
-    if let Err(e) = child.kill() {
-        eprintln!("Failed to kill PTY child: {e}");
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    fn process_running(pattern: &str) -> bool {
+        Command::new("pgrep")
+            .args(["-f", pattern])
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
     }
 
-    if let Err(e) = child.wait() {
-        eprintln!("Failed to wait for PTY child: {e}");
+    /// Regression: the shell used to survive while a command ran in the foreground,
+    /// because only the foreground group was signalled. Waiting on it then hung.
+    #[test]
+    fn dropping_a_terminal_kills_the_shell_and_its_command() {
+        let (events, _receiver) = tokio::sync::mpsc::unbounded_channel();
+        let mut terminal = VirtualTerminal::new(TerminalId::test(1), 24, 80, events);
+
+        // Odd duration so pgrep cannot match anything else on the machine.
+        let marker = format!("sleep 31{}", std::process::id());
+        terminal.execute_command(marker.clone());
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !process_running(&marker) {
+            assert!(Instant::now() < deadline, "command never started");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        let started = Instant::now();
+        drop(terminal);
+        assert!(
+            started.elapsed() < Duration::from_millis(100),
+            "drop must not block the daemon"
+        );
+
+        let deadline = Instant::now() + TERMINATE_GRACE + Duration::from_secs(2);
+        while process_running(&marker) {
+            assert!(Instant::now() < deadline, "command survived terminal drop");
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 }

@@ -16,7 +16,8 @@ use crate::ipc::server::run_server;
 pub async fn run_daemon() -> Result<()> {
     let user_manager = MiniUserManager::new();
     let window_manager = WindowManager::new();
-    let terminal_manager = TerminalManager::new();
+    let (terminal_events, mut terminal_event_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let terminal_manager = TerminalManager::new(terminal_events);
     let session_manager = SessionManager::new();
     let yaml_manager = YamlManager::new()?;
 
@@ -42,6 +43,14 @@ pub async fn run_daemon() -> Result<()> {
     }
 
     let daemon_manager = Arc::new(Mutex::new(daemon_manager));
+
+    // Events from terminals (tracked commands exiting) are applied here, outside the PTY threads.
+    let event_manager = daemon_manager.clone();
+    tokio::spawn(async move {
+        while let Some(event) = terminal_event_receiver.recv().await {
+            event_manager.lock().await.handle_terminal_event(event);
+        }
+    });
 
     // Without a session bus (CI, containers) the daemon still works; sysd actions just fail.
     let systemd = match SystemdClient::connect().await {

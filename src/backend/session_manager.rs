@@ -3,9 +3,6 @@ use serde::Serialize;
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap},
-    path::{Path, PathBuf},
-    process::Command,
-    vec,
 };
 
 use color_eyre::eyre::{Ok, OptionExt, Result, bail, eyre};
@@ -38,6 +35,8 @@ pub struct SessionId(pub u64);
 
 pub struct SessionManager {
     last_id: SessionId,
+    /// Source of `RunId`s; every start of a sysd session gets a fresh one.
+    last_run: u64,
     free_ids: BinaryHeap<Reverse<SessionId>>,
     sessions: HashMap<SessionId, Session>,
 }
@@ -46,6 +45,7 @@ impl SessionManager {
     pub fn new() -> Self {
         Self {
             last_id: SessionId(0),
+            last_run: 0,
             free_ids: BinaryHeap::new(),
             sessions: HashMap::new(),
         }
@@ -90,23 +90,20 @@ impl SessionManager {
         id
     }
 
-    pub fn create_running_sysd_session(
-        &mut self,
-        name: UnitName,
-        windows: Vec<WindowId>,
-    ) -> SessionId {
+    pub fn create_running_sysd_session(&mut self, name: UnitName, windows: Vec<WindowId>) -> RunId {
         let id = self.generate_id();
+        let run = self.next_run();
         let session = Session {
             id,
             name: name.to_string(),
             kind: SessionKind::SysdBased(SysdSession {
                 name,
-                state: SessionState::Running { windows },
+                state: SessionState::running(windows, run),
                 enabled: false,
             }),
         };
         self.sessions.insert(id, session);
-        id
+        run
     }
 
     pub fn create_stopped_sysd_session(&mut self, name: UnitName, enabled: bool) -> SessionId {
@@ -143,6 +140,18 @@ impl SessionManager {
         })
     }
 
+    /// The session that owns this window.
+    pub fn get_session_id_by_window(&self, window_id: WindowId) -> Option<SessionId> {
+        self.sessions
+            .values()
+            .find(|session| {
+                session
+                    .get_windows()
+                    .is_some_and(|windows| windows.contains(&window_id))
+            })
+            .map(|session| session.id)
+    }
+
     pub fn does_session_name_exist(&self, name: &str) -> bool {
         self.sessions.values().any(|session| session.name == name)
     }
@@ -154,8 +163,10 @@ impl SessionManager {
             .map(|session| session.id)
     }
 
-    // Only used on dormant sessions
-    pub fn start_sysd_session(&mut self, id: SessionId, windows: Vec<WindowId>) -> Result<()> {
+    /// Marks a stopped sysd session as running with these windows. The caller must have
+    /// torn down any previous windows.
+    pub fn start_sysd_session(&mut self, id: SessionId, windows: Vec<WindowId>) -> Result<RunId> {
+        let run = self.next_run();
         let session = self
             .get_session_by_id_mut(id)
             .ok_or_eyre("Session not found")?;
@@ -165,11 +176,16 @@ impl SessionManager {
                 bail!("Tried to start a non sysd session")
             }
             SessionKind::SysdBased(sysd_session) => {
-                sysd_session.state = SessionState::Running { windows };
+                sysd_session.state = SessionState::running(windows, run);
             }
         }
 
-        Ok(())
+        Ok(run)
+    }
+
+    fn next_run(&mut self) -> RunId {
+        self.last_run += 1;
+        RunId(self.last_run)
     }
 
     pub fn stop_sysd_session(&mut self, id: SessionId) -> Result<()> {
@@ -241,7 +257,7 @@ impl Session {
         match &self.kind {
             SessionKind::Ephemoral { windows } => Some(windows),
             SessionKind::SysdBased(session) => match &session.state {
-                SessionState::Running { windows } => Some(windows),
+                SessionState::Running { windows, .. } => Some(windows),
                 SessionState::Stopped => None,
             },
         }
@@ -251,7 +267,7 @@ impl Session {
         match &mut self.kind {
             SessionKind::Ephemoral { windows } => Some(windows),
             SessionKind::SysdBased(session) => match &mut session.state {
-                SessionState::Running { windows } => Some(windows),
+                SessionState::Running { windows, .. } => Some(windows),
                 SessionState::Stopped => None,
             },
         }
@@ -267,6 +283,16 @@ pub struct SysdSession {
     enabled: bool,
 }
 
+impl SessionState {
+    fn running(windows: Vec<WindowId>, run: RunId) -> Self {
+        SessionState::Running {
+            windows,
+            run,
+            tracked_exit: None,
+        }
+    }
+}
+
 impl SysdSession {
     pub fn unit(&self) -> &UnitName {
         &self.name
@@ -280,16 +306,40 @@ impl SysdSession {
         matches!(self.state, SessionState::Running { .. })
     }
 
+    pub fn state(&self) -> &SessionState {
+        &self.state
+    }
+
+    /// Records that a tracked command of the current run exited with `code`.
+    /// Only the first exit of a run counts.
+    pub fn record_tracked_exit(&mut self, code: i32) {
+        if let SessionState::Running { tracked_exit, .. } = &mut self.state {
+            tracked_exit.get_or_insert(code);
+        }
+    }
+
     pub fn get_sysd_data(&self) -> SysdData {
         SysdData {
             enabled: self.enabled,
-            running: matches!(self.state, SessionState::Running { windows: _ }),
+            running: self.is_running(),
         }
     }
 }
 
+/// Identifies one start of a sysd session, so a waiter from a previous run
+/// never mistakes the next run's state for its own.
+#[derive(
+    Debug, Clone, Copy, Eq, PartialEq, Hash, Encode, Decode, Serialize, serde::Deserialize,
+)]
+pub struct RunId(pub u64);
+
 pub enum SessionState {
-    Running { windows: Vec<WindowId> },
+    Running {
+        windows: Vec<WindowId>,
+        run: RunId,
+        /// Exit code of the first tracked command that exited during this run.
+        tracked_exit: Option<i32>,
+    },
     Stopped, // TODO Handle possible exit codes later
 }
 

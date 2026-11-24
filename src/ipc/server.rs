@@ -10,14 +10,19 @@ use tarpc::{
 use tokio::sync::Mutex;
 
 use crate::backend::{
-    deamon_manager::DaemonManager, session_manager::SessionId, systemd_client::SystemdClient,
+    deamon_manager::DaemonManager,
+    session_manager::{RunId, SessionId},
+    systemd_client::SystemdClient,
     terminal_manager::TerminalId, window_manager::WindowId,
 };
 use crate::ipc::{
     consts::socket_path,
-    protocol::{SessionInfo, SysdAction, TerminalUpdate},
+    protocol::{SessionInfo, SysdAction, SysdWaitStatus, TerminalUpdate},
     service::DaemonService,
 };
+
+/// Upper bound for one `wait_sysd_session` call; clients loop.
+const MAX_WAIT_MS: u64 = 60_000;
 
 #[derive(Clone)]
 pub struct DaemonRpcServer {
@@ -169,8 +174,13 @@ impl DaemonService for DaemonRpcServer {
     }
 
     async fn kill_daemon(self, _: context::Context) {
-        let manager = self.manager.lock().await;
-        manager.handle_kill_deamon()
+        // Tell waiting `__internal-systemd-start` processes first and give their replies
+        // a moment to go out, so they exit cleanly instead of seeing a dropped connection
+        // (which they treat as a crash, making systemd restart them and the daemon).
+        self.manager.lock().await.begin_shutdown();
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        self.manager.lock().await.handle_kill_deamon()
     }
 
     async fn export_session_to_file(
@@ -224,11 +234,34 @@ impl DaemonService for DaemonRpcServer {
         self,
         _: context::Context,
         file_path: std::path::PathBuf,
-    ) -> Result<(), String> {
+    ) -> Result<RunId, String> {
         let mut manager = self.manager.lock().await;
         manager
             .handle_start_sysd_session_from_file(file_path)
             .map_err(|e| e.to_string())
+    }
+
+    async fn wait_sysd_session(
+        self,
+        _: context::Context,
+        name: String,
+        run: RunId,
+        timeout_ms: u64,
+    ) -> Result<SysdWaitStatus, String> {
+        let deadline = tokio::time::Instant::now()
+            + std::time::Duration::from_millis(timeout_ms.min(MAX_WAIT_MS));
+
+        loop {
+            let (status, mut changes) = self.manager.lock().await.sysd_wait_status(&name, run);
+            if status != SysdWaitStatus::Running {
+                return Ok(status);
+            }
+            // The lock is released while waiting.
+            match tokio::time::timeout_at(deadline, changes.changed()).await {
+                Ok(Ok(())) => continue,
+                _ => return Ok(SysdWaitStatus::Running),
+            }
+        }
     }
 
     async fn stop_sysd_session(self, _: context::Context, id: SessionId) -> Result<(), String> {
@@ -241,18 +274,18 @@ impl DaemonService for DaemonRpcServer {
     async fn delete_sysd_session(
         self,
         _: context::Context,
-        id: SessionId,
-    ) -> Result<Vec<SessionInfo>, String> {
-        let unit = self
+        name: String,
+    ) -> Result<Vec<std::path::PathBuf>, String> {
+        let (unit, has_unit_file) = self
             .manager
             .lock()
             .await
-            .sysd_unit(id)
+            .sysd_delete_target(&name)
             .map_err(|e| e.to_string())?;
 
         // Best effort: take the unit out of systemd before its file disappears.
         // Disable needs the unit file to still exist.
-        if let Some(systemd) = &self.systemd {
+        if let Some(systemd) = self.systemd.as_ref().filter(|_| has_unit_file) {
             if let Err(e) = systemd.disable(&unit).await {
                 eprintln!("{e:#}");
             }
@@ -261,15 +294,17 @@ impl DaemonService for DaemonRpcServer {
             }
         }
 
-        let sessions = self
+        let removed = self
             .manager
             .lock()
             .await
-            .handle_delete_sysd_session(id)
+            .handle_delete_sysd_session(&unit)
             .map_err(|e| e.to_string())?;
 
-        self.reload_systemd().await;
-        Ok(sessions)
+        if has_unit_file {
+            self.reload_systemd().await;
+        }
+        Ok(removed)
     }
 
 }

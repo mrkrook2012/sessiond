@@ -70,10 +70,24 @@ impl YamlManager {
         Ok(serde_yaml::from_str(yaml)?)
     }
 
-    pub fn delete_session(&self, name: &str) -> Result<()> {
-        let path = self.get_session_path(name);
-        println!("Deleting {:?}", path);
-        fs::remove_file(path)?;
-        Ok(())
+    /// Every stored YAML file belonging to `unit_name`. The file name keeps the session's
+    /// original case (`Foo.yaml`) while units are lowercase, and there can be more than one
+    /// (`Foo.yaml` and `foo.yaml`), so match on the name inside the file, falling back to
+    /// the file name for files that do not parse.
+    pub fn find_session_files(&self, unit_name: &str) -> Result<Vec<PathBuf>> {
+        Ok(self
+            .list_session_files()?
+            .into_iter()
+            .filter(|path| {
+                let name = match self.load_session(path.clone()) {
+                    Ok(session) => session.name,
+                    Err(_) => path
+                        .file_stem()
+                        .map(|stem| stem.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                };
+                name.eq_ignore_ascii_case(unit_name)
+            })
+            .collect())
     }
 }

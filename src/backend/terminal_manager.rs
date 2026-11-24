@@ -5,25 +5,37 @@ use bincode_next::{Decode, Encode};
 use mk_utils::AssignOps;
 use serde::Serialize;
 
-use crate::backend::virtual_terminal::VirtualTerminal;
+use std::time::Instant;
+use tokio::sync::mpsc::UnboundedSender;
+
+use crate::backend::virtual_terminal::{TerminalEvent, VirtualTerminal};
 use crate::ipc::protocol::*;
 // If a second person inspects the same session, we will not resize and their frontend will adapt
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, AssignOps, Encode, Decode, Serialize, serde::Deserialize)]
 pub struct TerminalId(u64);
 
+impl TerminalId {
+    #[cfg(test)]
+    pub fn test(id: u64) -> Self {
+        TerminalId(id)
+    }
+}
+
 pub struct TerminalManager {
     last_id: TerminalId,
     free_ids: BinaryHeap<Reverse<TerminalId>>,
     terminals: HashMap<TerminalId, VirtualTerminal>,
+    events: UnboundedSender<TerminalEvent>,
 }
 
 impl TerminalManager {
-    pub fn new() -> Self {
+    pub fn new(events: UnboundedSender<TerminalEvent>) -> Self {
         Self {
             last_id: TerminalId(0),
             free_ids: BinaryHeap::new(),
             terminals: HashMap::new(),
+            events,
         }
     }
 
@@ -70,6 +82,14 @@ impl TerminalManager {
             .execute_command(command);
     }
 
+    pub fn run_tracked_on_terminal(&mut self, terminal_id: TerminalId, command: String) {
+        self.get_terminal_from_id_mut(terminal_id).run_tracked(command);
+    }
+
+    pub fn last_user_input(&self, terminal_id: TerminalId) -> Option<Instant> {
+        self.terminals.get(&terminal_id)?.last_user_input()
+    }
+
     pub fn kill_terminal(&mut self, terminal_id: TerminalId) {
         self.free_ids.push(Reverse(terminal_id));
         self.terminals.remove(&terminal_id).unwrap();
@@ -77,7 +97,7 @@ impl TerminalManager {
 
     pub fn create_terminal(&mut self, rows: u16, cols: u16) -> TerminalId {
         let id = self.generate_id();
-        let terminal = VirtualTerminal::new(id, rows, cols);
+        let terminal = VirtualTerminal::new(id, rows, cols, self.events.clone());
         self.terminals.insert(id, terminal);
         id
     }

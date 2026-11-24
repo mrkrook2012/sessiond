@@ -26,12 +26,6 @@ impl SystemdManager {
         Ok(Self::unit_dir()?.join(format!("{name}.service")))
     }
 
-    pub fn remove_sysd_service_file(name: &str) -> Result {
-        let path = Self::unit_file_path(name)?;
-        println!("Deleting {:?}", path);
-        std::fs::remove_file(path)?;
-        Ok(())
-    }
     pub fn write_default_template_to_path(
         path_to_config_file: PathBuf,
         user: String,
@@ -61,7 +55,7 @@ impl SystemdManager {
             sysd_directory,
             start_command,
             stop_command,
-            RestartPolicy::No,
+            RestartPolicy::OnFailure,
         );
 
         // A daemon on a non-default socket (tests) must get the unit's ExecStart/ExecStop
@@ -88,8 +82,12 @@ impl SystemdManager {
         After=network.target
 
         [Service]
-        Type=oneshot
-        RemainAfterExit=yes
+        # The start command stays running for as long as the session does, and exits
+        # with an error when a tracked command exits, so systemd restarts the session.
+        Type=simple
+        # The daemon may have been started from this unit; stopping or restarting
+        # the unit must only end our start command, not the daemon and its sessions.
+        KillMode=process
         User={user}
         WorkingDirectory={work_dir}
 
@@ -97,6 +95,7 @@ impl SystemdManager {
         ExecStop={stop_command}
 
         Restart={restart_policy}
+        RestartSec=3
 
         [Install]
         WantedBy=default.target

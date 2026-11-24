@@ -325,6 +325,11 @@ fn export_and_import_session_roundtrip() {
         "command missing from yaml:\n{yaml_1}"
     );
 
+    assert!(
+        yaml_1.contains("tracked: true"),
+        "exported windows should be tracked by default:\n{yaml_1}"
+    );
+
     assert!(yaml_path.is_file());
 
     // 3. Kill the original session.
@@ -464,6 +469,99 @@ fn external_systemctl_changes_are_tracked() {
 
     // Our own CLI goes through D-Bus as well.
     h.ok(&["service", "start", &name]);
+    wait_for_list_line(&h, &name, "running", |l| l.contains("running"));
+
+    h.ok(&["service", "delete", &name]);
+    assert!(h.sessions().is_empty());
+}
+
+#[test]
+fn service_delete_removes_service_and_yaml_files() {
+    let h = Harness::with_isolated_systemd();
+    let data = h.data_dir();
+    let units = h.systemd_dir();
+
+    let yaml = |name: &str| {
+        format!("name: {name}\nwindows:\n- command: sleep 1\n  working_directory: /tmp\n")
+    };
+
+    // Mixed case: the YAML keeps the original name, the unit is lowercase.
+    // A second YAML for the same unit must go too.
+    fs::write(data.join("MixedCase.yaml"), yaml("MixedCase")).unwrap();
+    fs::write(data.join("mixedcase.yaml"), yaml("mixedcase")).unwrap();
+    fs::write(units.join("mixedcase.service"), "[Unit]\n").unwrap();
+
+    // Leftovers the daemon never registers: a YAML without unit, and a unit without YAML.
+    fs::write(data.join("orphan.yaml"), yaml("orphan")).unwrap();
+    fs::write(units.join("lonely.service"), "[Unit]\n").unwrap();
+
+    // Unrelated files must survive.
+    fs::write(data.join("keep.yaml"), yaml("keep")).unwrap();
+    fs::write(units.join("keep.service"), "[Unit]\n").unwrap();
+
+    h.ok(&["run", "-n", "eph", "sleep", "300"]);
+    let mut names = h.sessions();
+    names.sort();
+    assert_eq!(names, vec!["eph", "keep", "mixedcase"]);
+
+    // Registered session, by its original-case name.
+    let out = h.ok(&["service", "delete", "MixedCase"]);
+    assert!(out.contains("MixedCase.yaml"), "got: {out}");
+    assert!(!data.join("MixedCase.yaml").exists());
+    assert!(!data.join("mixedcase.yaml").exists());
+    assert!(!units.join("mixedcase.service").exists());
+
+    // Unregistered leftovers.
+    h.ok(&["service", "delete", "orphan"]);
+    assert!(!data.join("orphan.yaml").exists());
+    h.ok(&["service", "delete", "lonely"]);
+    assert!(!units.join("lonely.service").exists());
+
+    // Nothing left to delete is an error.
+    let err = h.fails(&["service", "delete", "orphan"]);
+    assert!(err.contains("No service named"), "got: {err}");
+
+    // Ephemeral sessions are not services.
+    h.fails(&["service", "delete", "eph"]);
+
+    let mut names = h.sessions();
+    names.sort();
+    assert_eq!(names, vec!["eph", "keep"]);
+    assert!(data.join("keep.yaml").exists());
+    assert!(units.join("keep.service").exists());
+}
+
+fn n_restarts(unit: &str) -> u32 {
+    let out = Command::new("systemctl")
+        .args(["--user", "show", "-p", "NRestarts", "--value", unit])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(0)
+}
+
+#[test]
+fn tracked_service_restarts_when_its_command_exits() {
+    if !user_systemd_available() {
+        eprintln!("skipping: no user systemd instance");
+        return;
+    }
+    let h = Harness::new();
+    let name = format!("dtest-restart-{}", std::process::id());
+    let unit = format!("{name}.service");
+
+    // `run --systemd` tracks its command, so this exits after a second and should restart.
+    h.ok(&["run", "--systemd", "--name", &name, "sleep", "1"]);
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while n_restarts(&unit) < 1 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "systemd never restarted {unit}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+
+    // After the restart the session is back and running.
     wait_for_list_line(&h, &name, "running", |l| l.contains("running"));
 
     h.ok(&["service", "delete", &name]);

@@ -6,10 +6,12 @@ pub struct YamlSession {
     pub windows: Vec<YamlWindow>,
 }
 
-impl YamlSession {}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct YamlWindow {
     pub command: String,
     pub working_directory: String,
+    /// Restart the (systemd) session when this window's command exits on its own.
+    /// Ignored for ephemeral sessions.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tracked: bool,
 }

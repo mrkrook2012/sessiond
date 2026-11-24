@@ -31,8 +31,12 @@ impl WindowManager {
     }
 
     pub fn create_window(&mut self, terminal_id: TerminalId) -> WindowId {
+        self.create_window_with_tracking(terminal_id, false)
+    }
+
+    pub fn create_window_with_tracking(&mut self, terminal_id: TerminalId, tracked: bool) -> WindowId {
         let id = self.generate_id();
-        let window = Window::new(terminal_id, id);
+        let window = Window::new(terminal_id, id, tracked);
         self.windows.insert(id, window);
         id
     }

@@ -11,9 +11,6 @@ impl SystemdServiceManager {
         Self {}
     }
 
-    pub fn remove_sysd_service_file(&mut self, name: &str) -> Result {
-        SystemdManager::remove_sysd_service_file(name)
-    }
 
     pub fn create_service_from_yaml(
         &mut self,

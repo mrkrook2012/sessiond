@@ -9,10 +9,10 @@ todo:
 
   - Fix ctrl in terminal to skip words
   - Fix btop in terminal
-  - Add scrollback to terminals
+  - Add scrollback to terminals 
   
-  - Add process tracking based restart
-  - Add adding stale sysd services
+  - Add process tracking based restart V
+  - Add adding stale sysd services V
   - Add daemon based duplicate name rejection
   - Add event based sysd status tracking
   - make CI/CD pipeline V

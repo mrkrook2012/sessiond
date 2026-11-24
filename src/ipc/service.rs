@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
-use crate::backend::session_manager::SessionId;
+use crate::backend::session_manager::{RunId, SessionId};
 use crate::backend::terminal_manager::TerminalId;
 use crate::backend::window_manager::WindowId;
-use crate::ipc::protocol::{SessionInfo, SysdAction, TerminalUpdate};
+use crate::ipc::protocol::{SessionInfo, SysdAction, SysdWaitStatus, TerminalUpdate};
 
 #[tarpc::service]
 pub trait DaemonService {
@@ -30,7 +30,9 @@ pub trait DaemonService {
         name: Option<String>,
     ) -> Vec<SessionInfo>;
 
-    async fn delete_sysd_session(id: SessionId) -> Result<Vec<SessionInfo>, String>;
+    /// Delete a systemd session by name: disables and stops the unit, and removes its
+    /// `.service` and `.yaml` files. Returns the removed files.
+    async fn delete_sysd_session(name: String) -> Result<Vec<PathBuf>, String>;
 
     /// Stop sending terminal updates for the current session.
     async fn exit_session() -> Vec<SessionInfo>;
@@ -75,8 +77,16 @@ pub trait DaemonService {
         sysd_action: SysdAction,
     ) -> Result<Vec<SessionInfo>, String>;
 
-    /// Start a systemd session from a YAML file.
-    async fn start_sysd_session_from_file(file_path: PathBuf) -> Result<(), String>;
+    /// Start a systemd session from a YAML file. Returns the id of this run.
+    async fn start_sysd_session_from_file(file_path: PathBuf) -> Result<RunId, String>;
+
+    /// Waits up to `timeout_ms` for run `run` of sysd session `name` to end, or for one of
+    /// its tracked commands to exit. Returns `Running` on timeout.
+    async fn wait_sysd_session(
+        name: String,
+        run: RunId,
+        timeout_ms: u64,
+    ) -> Result<SysdWaitStatus, String>;
 
     /// Stop a systemd session.
     async fn stop_sysd_session(id: SessionId) -> Result<(), String>;

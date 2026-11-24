@@ -25,7 +25,6 @@ const UNIT_INTERFACE: &str = "org.freedesktop.systemd1.Unit";
 
 #[derive(Clone)]
 pub struct SystemdClient {
-    connection: Connection,
     manager: ManagerProxy<'static>,
 }
 
@@ -39,10 +38,7 @@ impl SystemdClient {
             .await
             .wrap_err("Failed to create systemd manager proxy")?;
 
-        Ok(Self {
-            connection,
-            manager,
-        })
+        Ok(Self { manager })
     }
 
     pub async fn start(&self, unit: &UnitName) -> Result<()> {
@@ -122,16 +118,24 @@ fn service_name(unit: &UnitName) -> String {
 /// - `PropertiesChanged` on a unit's `ActiveState`: if one of our units went `inactive` or
 ///   `failed`, tear down its windows. Starting is not handled here, because `ExecStart`
 ///   already tells the daemon via `__internal-systemd-start`.
+///
+/// Signals arrive on their own connection. zbus stops reading a connection while any of
+/// its signal streams is full, so sharing one with method calls lets a burst of unit
+/// signals block the replies we are waiting for (including the ones this loop awaits).
 pub async fn watch_events(client: SystemdClient, manager: Arc<Mutex<DaemonManager>>) -> Result<()> {
+    let signal_connection = Connection::session()
+        .await
+        .wrap_err("Failed to open D-Bus connection for systemd signals")?;
+    let signals = ManagerProxy::new(&signal_connection).await?;
+
     // systemd only broadcasts unit/job signals while at least one client is subscribed.
-    client
-        .manager
+    signals
         .subscribe()
         .await
         .wrap_err("Failed to subscribe to systemd signals")?;
 
-    let mut unit_files_changed = client.manager.receive_unit_files_changed().await?;
-    let mut reloading = client.manager.receive_reloading().await?;
+    let mut unit_files_changed = signals.receive_unit_files_changed().await?;
+    let mut reloading = signals.receive_reloading().await?;
 
     let rule = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
@@ -140,7 +144,9 @@ pub async fn watch_events(client: SystemdClient, manager: Arc<Mutex<DaemonManage
         .path_namespace("/org/freedesktop/systemd1/unit")?
         .arg(0, UNIT_INTERFACE)?
         .build();
-    let mut unit_properties = MessageStream::for_match_rule(rule, &client.connection, None).await?;
+    // Every unit's changes match this, so leave room for bursts (e.g. many units starting at once).
+    let mut unit_properties =
+        MessageStream::for_match_rule(rule, &signal_connection, Some(1024)).await?;
 
     // Units registered from disk at startup do not know their enabled state yet.
     refresh_enabled(&client, &manager).await;

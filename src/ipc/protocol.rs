@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::backend::{
-    session_manager::{SessionId, SessionState},
+    session_manager::SessionId,
     terminal_manager::TerminalId,
     window_manager::WindowId,
 };
@@ -100,6 +100,19 @@ pub enum ClientMessage {
     /// Kill the daemon process
     KillDaemon,
     // Useful for cli
+}
+
+/// Answer to `wait_sysd_session`: what happened to one run of a sysd session.
+#[derive(Decode, Encode, Debug, Clone, Copy, PartialEq, Serialize, serde::Deserialize)]
+pub enum SysdWaitStatus {
+    /// Nothing happened before the wait timed out; ask again.
+    Running,
+    /// A tracked command exited on its own. The unit should fail so systemd restarts it.
+    TrackedExited { code: i32 },
+    /// The run is over: the session was stopped, killed, deleted or restarted.
+    Ended,
+    /// The daemon is shutting down on request.
+    ShuttingDown,
 }
 
 #[derive(Decode, Encode, Debug, Serialize, serde::Deserialize)]

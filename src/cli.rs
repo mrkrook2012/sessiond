@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use crate::backend::session_manager::SessionId;
 use crate::ipc::client::DaemonClient;
 use crate::ipc::consts::socket_path;
-use crate::ipc::protocol::{SessionInfo, SysdAction};
+use crate::ipc::protocol::{SessionInfo, SysdAction, SysdWaitStatus};
 
 /// Directory for daemon.out / daemon.err.
 const LOG_DIR_ENV_VAR: &str = "DAEMON_TEST_LOG_DIR";
@@ -376,12 +376,15 @@ async fn handle_kill_all_sessions() -> Result<()> {
 async fn handle_service(action: ServiceCommands) -> Result<()> {
     match action {
         ServiceCommands::Delete { name } => {
-            let mut rpc = connect().await?;
-            let id = find_session_id(&rpc, &name).await?;
+            let rpc = connect().await?;
 
-            rpc.delete_sysd_session(id).await?;
+            // By name, so leftovers the daemon never registered can be deleted too.
+            let removed = rpc.delete_sysd_session(name.clone()).await?;
 
             println!("Deleted service: {name}");
+            for file in removed {
+                println!("  removed {}", file.display());
+            }
             Ok(())
         }
         action => {
@@ -535,14 +538,42 @@ async fn handle_internal_systemd_start(file_path: PathBuf) -> Result<()> {
         absolute_path.display()
     );
 
-    rpc.start_sysd_session_from_file(absolute_path).await?;
+    let yaml_name = session_name_from_config(&absolute_path)?;
+    let run = rpc.start_sysd_session_from_file(absolute_path).await?;
 
-    println!(
-        "Systemd session started successfully from {}",
-        file_path.display()
-    );
+    println!("Systemd session '{yaml_name}' started, waiting for it to end");
 
-    Ok(())
+    // Stay alive for as long as the session runs: this process is the unit's main process.
+    // Exiting with an error makes systemd (Restart=on-failure) restart the unit.
+    loop {
+        // A lost connection means the daemon died: an error, so systemd restarts us.
+        match rpc
+            .wait_sysd_session(yaml_name.clone(), run, Duration::from_secs(30))
+            .await?
+        {
+            SysdWaitStatus::Running => continue,
+            SysdWaitStatus::TrackedExited { code } => {
+                return Err(eyre!(
+                    "Tracked command in '{yaml_name}' exited with code {code}, restarting"
+                ));
+            }
+            SysdWaitStatus::Ended => {
+                println!("Systemd session '{yaml_name}' ended");
+                return Ok(());
+            }
+            SysdWaitStatus::ShuttingDown => {
+                println!("Daemon is shutting down, stopping '{yaml_name}'");
+                return Ok(());
+            }
+        }
+    }
+}
+
+/// The session name as the daemon stores it (the unit name, lowercased).
+fn session_name_from_config(path: &std::path::Path) -> Result<String> {
+    let yaml: crate::backend::yaml::models::YamlSession =
+        serde_yaml::from_str(&fs::read_to_string(path)?)?;
+    Ok(crate::backend::session_manager::UnitName::new(&yaml.name)?.to_string())
 }
 
 /// Stops a systemd-managed session. Does not start the daemon.

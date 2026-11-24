@@ -4,11 +4,13 @@ use color_eyre::eyre::{Result, eyre};
 use tarpc::{client, context, tokio_serde::formats::Bincode};
 
 use crate::backend::{
-    session_manager::SessionId, terminal_manager::TerminalId, window_manager::WindowId,
+    session_manager::{RunId, SessionId},
+    terminal_manager::TerminalId,
+    window_manager::WindowId,
 };
 use crate::ipc::{
     consts::socket_path,
-    protocol::{SessionInfo, SysdAction, TerminalUpdate},
+    protocol::{SessionInfo, SysdAction, SysdWaitStatus, TerminalUpdate},
     service::DaemonServiceClient,
 };
 
@@ -94,8 +96,8 @@ impl DaemonClient {
         )
         .await
     }
-    pub async fn delete_sysd_session(&mut self, id: SessionId) -> Result<Vec<SessionInfo>> {
-        self.rpc_call_result(self.client.delete_sysd_session(context::current(), id))
+    pub async fn delete_sysd_session(&self, name: String) -> Result<Vec<PathBuf>> {
+        self.rpc_call_result(self.client.delete_sysd_session(context::current(), name))
             .await
     }
 
@@ -183,11 +185,31 @@ impl DaemonClient {
         .await
     }
 
-    pub async fn start_sysd_session_from_file(&self, file_path: PathBuf) -> Result<()> {
+    pub async fn start_sysd_session_from_file(&self, file_path: PathBuf) -> Result<RunId> {
         self.rpc_call_result(
             self.client
                 .start_sysd_session_from_file(context::current(), file_path),
         )
+        .await
+    }
+
+    /// Long-polls for up to `timeout`. Returns `Running` if nothing happened in that time.
+    pub async fn wait_sysd_session(
+        &self,
+        name: String,
+        run: RunId,
+        timeout: std::time::Duration,
+    ) -> Result<SysdWaitStatus> {
+        // The default deadline (10s) is shorter than the wait; leave room for the reply.
+        let mut ctx = context::current();
+        ctx.deadline = std::time::Instant::now() + timeout + std::time::Duration::from_secs(5);
+
+        self.rpc_call_result(self.client.wait_sysd_session(
+            ctx,
+            name,
+            run,
+            timeout.as_millis() as u64,
+        ))
         .await
     }
 
