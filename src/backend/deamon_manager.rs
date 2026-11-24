@@ -10,7 +10,7 @@ use crate::backend::window_manager::{WindowId, WindowManager};
 use crate::backend::yaml::models::{YamlSession, YamlWindow};
 use crate::backend::yaml::yaml_manager::YamlManager;
 use crate::ipc::consts::socket_path;
-use crate::ipc::protocol::{SessionInfo, SysdAction, TerminalUpdate};
+use crate::ipc::protocol::{SessionInfo, TerminalUpdate};
 use color_eyre::eyre::Result;
  
 /// Entry point for IPC requests. Holds no logic of its own beyond coordinating:
@@ -119,16 +119,25 @@ impl DaemonManager {
         self.runtime.stop_sysd_session(id)
     }
  
-    // TODO Move this to frontend only, idc
-    pub fn handle_execute_sysd_action(
-        &mut self,
-        id: SessionId,
-        sysd_action: SysdAction,
-    ) -> Result<Vec<SessionInfo>> {
-        self.runtime.execute_sysd_action(id, sysd_action)?;
-        Ok(self.runtime.all_session_info())
+    // ------------------------------------------------ sysd state (driven by systemd)
+
+    /// The unit behind a sysd session; the server uses it to talk to systemd without holding the lock.
+    pub fn sysd_unit(&self, id: SessionId) -> Result<UnitName> {
+        self.runtime.sysd_unit(id)
     }
- 
+
+    pub fn sysd_units(&self) -> Vec<UnitName> {
+        self.runtime.sysd_units()
+    }
+
+    pub fn set_sysd_enabled(&mut self, unit: &UnitName, enabled: bool) {
+        self.runtime.set_sysd_enabled(unit, enabled);
+    }
+
+    pub fn handle_unit_deactivated(&mut self, unit: &UnitName) {
+        self.runtime.handle_unit_deactivated(unit);
+    }
+
     // ------------------------------------------------ runtime + store
  
     pub fn handle_start_session_from_file(&mut self, file_path: PathBuf) -> Result<()> {
@@ -196,10 +205,30 @@ impl DaemonManager {
         // TODO, this might not actually succeed
         self.store.create_service(&path, unit.clone()).unwrap();
  
-        self.runtime.add_stopped_sysd_session(unit);
+        self.runtime.add_stopped_sysd_session(unit, false);
         self.runtime.all_session_info()
     }
  
+    /// Registers every sysd session that exists on disk but is not known to this
+    /// daemon yet as a stopped session. Called once at daemon startup, so services
+    /// that were created earlier but never started show up and can be managed.
+    /// Returns the number of sessions registered.
+    pub fn register_stored_sysd_sessions(&mut self) -> Result<usize> {
+        let mut registered = 0;
+
+        for stored in self.store.discover_sysd_sessions()? {
+            if self.runtime.session_name_exists(&stored.unit.to_string()) {
+                continue;
+            }
+            println!("Registering stopped sysd session '{}'", stored.unit.to_string());
+            // The enabled state is filled in by the systemd event watcher once it connects.
+            self.runtime.add_stopped_sysd_session(stored.unit, false);
+            registered += 1;
+        }
+
+        Ok(registered)
+    }
+
     pub fn handle_delete_sysd_session(&mut self, id: SessionId) -> Result<Vec<SessionInfo>> {
         let name = self.runtime.session_name(id)?;
  

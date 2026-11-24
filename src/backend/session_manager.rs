@@ -109,7 +109,7 @@ impl SessionManager {
         id
     }
 
-    pub fn create_stopped_sysd_session(&mut self, name: UnitName) -> SessionId {
+    pub fn create_stopped_sysd_session(&mut self, name: UnitName, enabled: bool) -> SessionId {
         let id = self.generate_id();
         let session = Session {
             id,
@@ -117,11 +117,30 @@ impl SessionManager {
             kind: SessionKind::SysdBased(SysdSession {
                 name,
                 state: SessionState::Stopped,
-                enabled: false,
+                enabled,
             }),
         };
         self.sessions.insert(id, session);
         id
+    }
+
+    /// Unit names of every sysd session, running or stopped.
+    pub fn sysd_units(&self) -> Vec<UnitName> {
+        self.sessions
+            .values()
+            .filter_map(|session| match &session.kind {
+                SessionKind::SysdBased(sysd) => Some(sysd.unit().clone()),
+                SessionKind::Ephemoral { .. } => None,
+            })
+            .collect()
+    }
+
+    /// Finds the sysd session backed by this unit.
+    pub fn get_sysd_session_by_unit_mut(&mut self, unit: &UnitName) -> Option<(SessionId, &mut SysdSession)> {
+        self.sessions.values_mut().find_map(|session| match &mut session.kind {
+            SessionKind::SysdBased(sysd) if sysd.unit() == unit => Some((session.id, sysd)),
+            _ => None,
+        })
     }
 
     pub fn does_session_name_exist(&self, name: &str) -> bool {
@@ -249,53 +268,18 @@ pub struct SysdSession {
 }
 
 impl SysdSession {
-    // TODO improve this by using the actual commands
-    // This code wont change the state, will be done temp by start-sysd command
-    pub fn start(&mut self) {
-        Command::new("systemctl")
-            .arg("--user")
-            .arg("start")
-            .arg(format!("{}.service", self.name.to_string()))
-            .output()
-            .unwrap();
+    pub fn unit(&self) -> &UnitName {
+        &self.name
     }
 
-    pub fn stop(&mut self) {
-        Command::new("systemctl")
-            .arg("--user")
-            .arg("start")
-            .arg(format!("{}.service", self.name.to_string()))
-            .output()
-            .unwrap();
-    }
-    pub fn restart(&mut self) {
-        Command::new("systemctl")
-            .arg("--user")
-            .arg("restart")
-            .arg(format!("{}.service", self.name.to_string()))
-            .output()
-            .unwrap();
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
     }
 
-    pub fn enable(&mut self) {
-        Command::new("systemctl")
-            .arg("--user")
-            .arg("enable")
-            .arg(format!("{}.service", self.name.to_string()))
-            .output()
-            .unwrap();
-        self.enabled = true;
+    pub fn is_running(&self) -> bool {
+        matches!(self.state, SessionState::Running { .. })
     }
 
-    pub fn disable(&mut self) {
-        Command::new("systemctl")
-            .arg("--user")
-            .arg("disable")
-            .arg(format!("{}", self.name.to_string()))
-            .output()
-            .unwrap();
-        self.enabled = false;
-    }
     pub fn get_sysd_data(&self) -> SysdData {
         SysdData {
             enabled: self.enabled,

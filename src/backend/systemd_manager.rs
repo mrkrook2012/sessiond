@@ -4,14 +4,30 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use crate::backend::session_manager::UnitName;
+use crate::ipc::consts::SOCKET_ENV_VAR;
+
+/// Overrides the directory unit files are written to / looked up in.
+/// Only meant for tests: systemd itself will not see units outside its search path.
+pub const SYSTEMD_DIR_ENV_VAR: &str = "DAEMON_TEST_SYSTEMD_DIR";
 
 pub struct SystemdManager {}
 
 impl SystemdManager {
-    pub fn remove_sysd_service_file(name: &str) -> Result {
+    /// The user unit directory: `DAEMON_TEST_SYSTEMD_DIR` if set, otherwise `~/.config/systemd/user`.
+    pub fn unit_dir() -> Result<PathBuf> {
+        if let Some(dir) = std::env::var_os(SYSTEMD_DIR_ENV_VAR) {
+            return Ok(PathBuf::from(dir));
+        }
         let home: String = std::env::var("HOME")?;
+        Ok(PathBuf::from(home).join(".config/systemd/user"))
+    }
 
-        let path = Self::get_file_location_from_home(&home, name);
+    pub fn unit_file_path(name: &str) -> Result<PathBuf> {
+        Ok(Self::unit_dir()?.join(format!("{name}.service")))
+    }
+
+    pub fn remove_sysd_service_file(name: &str) -> Result {
+        let path = Self::unit_file_path(name)?;
         println!("Deleting {:?}", path);
         std::fs::remove_file(path)?;
         Ok(())
@@ -40,13 +56,20 @@ impl SystemdManager {
         );
         let stop_command = format!("{bin_path} __internal-systemd-stop {:?}", name.to_string());
 
-        let file_contents = Self::get_filled_template(
+        let mut file_contents = Self::get_filled_template(
             &user,
             sysd_directory,
             start_command,
             stop_command,
             RestartPolicy::No,
         );
+
+        // A daemon on a non-default socket (tests) must get the unit's ExecStart/ExecStop
+        // to talk back to *it*, not to the default daemon.
+        if let Some(socket) = std::env::var_os(SOCKET_ENV_VAR) {
+            let line = format!("Environment=\"{SOCKET_ENV_VAR}={}\"\n", socket.to_string_lossy());
+            file_contents = file_contents.replacen("[Service]\n", &format!("[Service]\n{line}"), 1);
+        }
         fs::write(service_file_path_buffer, file_contents).unwrap();
 
         Ok(())
@@ -76,7 +99,7 @@ impl SystemdManager {
         Restart={restart_policy}
 
         [Install]
-        WantedBy=multi-user.target
+        WantedBy=default.target
         
         "
         .to_owned()
@@ -87,18 +110,6 @@ impl SystemdManager {
         .replace("{restart_policy}", restart.as_str())
     }
 
-    fn get_file_location(user: &str, name: &str) -> PathBuf {
-        PathBuf::from("/home")
-            .join(user)
-            .join(".config/systemd/user")
-            .join(format!("{name}.service"))
-    }
-
-    fn get_file_location_from_home(home: &str, name: &str) -> PathBuf {
-        PathBuf::from(home)
-            .join(".config/systemd/user")
-            .join(format!("{name}.service"))
-    }
 }
 
 pub enum RestartPolicy {

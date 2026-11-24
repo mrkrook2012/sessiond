@@ -6,26 +6,54 @@ use tempfile::TempDir;
 /// One isolated daemon per test: own socket, own logs, killed on drop.
 struct Harness {
     dir: TempDir,
+    /// When set, unit files go to a temp dir instead of ~/.config/systemd/user.
+    isolated_systemd: bool,
 }
 
 impl Harness {
     fn new() -> Self {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("data")).unwrap();
         Self {
-            dir: TempDir::new().unwrap(),
+            dir,
+            isolated_systemd: false,
         }
+    }
+
+    /// Like `new`, but unit files live in a temp dir. systemd won't see them,
+    /// so only use this for tests that don't need systemctl to actually work.
+    fn with_isolated_systemd() -> Self {
+        let mut h = Self::new();
+        fs::create_dir_all(h.systemd_dir()).unwrap();
+        h.isolated_systemd = true;
+        h
     }
 
     fn socket(&self) -> PathBuf {
         self.dir.path().join("daemon.sock")
     }
 
+    /// Where the daemon stores session YAML files.
+    fn data_dir(&self) -> PathBuf {
+        self.dir.path().join("data")
+    }
+
+    fn systemd_dir(&self) -> PathBuf {
+        self.dir.path().join("systemd")
+    }
+
     fn raw(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_daemon_test"))
-            .args(args)
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_daemon_test"));
+        cmd.args(args)
             .env("DAEMON_TEST_SOCKET", self.socket())
             .env("DAEMON_TEST_LOG_DIR", self.dir.path())
-            .output()
-            .expect("Failed to execute command")
+            .env("DAEMON_TEST_DATA_DIR", self.data_dir());
+
+        if self.isolated_systemd {
+            cmd.env("DAEMON_TEST_SYSTEMD_DIR", self.systemd_dir());
+        }
+
+        cmd.output().expect("Failed to execute command")
     }
 
     fn assert_daemon_healthy(&self, step: &str) {
@@ -321,8 +349,53 @@ fn export_and_import_session_roundtrip() {
 
     h.assert_daemon_healthy("end of roundtrip test");
 }
+/// True if a user systemd instance is reachable. CI runners usually have none,
+/// so tests that need real systemd skip themselves there.
+fn user_systemd_available() -> bool {
+    Command::new("systemctl")
+        .args(["--user", "show-environment"])
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+/// Polls `list` until `pred` holds for the line of session `name`, or panics after 5 seconds.
+fn wait_for_list_line(h: &Harness, name: &str, what: &str, pred: impl Fn(&str) -> bool) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let list = h.ok(&["list"]);
+        let line = list
+            .lines()
+            .find(|line| line.starts_with(&format!("- {name} ")))
+            .unwrap_or("")
+            .to_owned();
+        if pred(&line) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {name} to be {what}, last line: {line:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+fn systemctl(args: &[&str]) {
+    let out = Command::new("systemctl").arg("--user").args(args).output().unwrap();
+    assert!(
+        out.status.success(),
+        "systemctl --user {} failed: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 #[test]
 fn systemd_round_trip() {
+    if !user_systemd_available() {
+        eprintln!("skipping: no user systemd instance");
+        return;
+    }
     let h = Harness::new();
     h.ok(&["run", "--systemd", "--name", "testing101", "echo test"]);
 
@@ -331,6 +404,70 @@ fn systemd_round_trip() {
     h.ok(&["run", "--systemd", "--name", "testing101", "echo test"]);
 
     h.ok(&["service", "delete", "testing101"]);
+}
+
+#[test]
+fn stored_sysd_sessions_are_registered_on_daemon_start() {
+    let h = Harness::with_isolated_systemd();
+
+    let yaml = |name: &str| {
+        format!("name: {name}\nwindows:\n- command: sleep 1\n  working_directory: /tmp\n")
+    };
+
+    // A sysd session that was created but never started: YAML + unit file.
+    fs::write(h.data_dir().join("stale.yaml"), yaml("stale")).unwrap();
+    fs::write(h.systemd_dir().join("stale.service"), "[Unit]\n").unwrap();
+
+    // YAML without a unit file is not a sysd session.
+    fs::write(h.data_dir().join("orphan.yaml"), yaml("orphan")).unwrap();
+
+    // Garbage must be skipped, not crash the daemon.
+    fs::write(h.data_dir().join("broken.yaml"), "this: is: not: valid").unwrap();
+
+    // Any command that starts the daemon triggers the scan.
+    h.ok(&["run", "-n", "eph", "sleep", "300"]);
+
+    let mut names = h.sessions();
+    names.sort();
+    assert_eq!(names, vec!["eph", "stale"]);
+
+    // The registered session is a real sysd session: delete removes both files.
+    h.ok(&["service", "delete", "stale"]);
+
+    assert_eq!(h.sessions(), vec!["eph"]);
+    assert!(!h.data_dir().join("stale.yaml").exists());
+    assert!(!h.systemd_dir().join("stale.service").exists());
+}
+
+#[test]
+fn external_systemctl_changes_are_tracked() {
+    if !user_systemd_available() {
+        eprintln!("skipping: no user systemd instance");
+        return;
+    }
+    let h = Harness::new();
+    // Unique per run so parallel or leftover units never collide.
+    let name = format!("dtest-events-{}", std::process::id());
+
+    h.ok(&["run", "--systemd", "--name", &name, "sleep", "300"]);
+    wait_for_list_line(&h, &name, "running", |l| l.contains("running"));
+
+    // Plain systemctl, not our CLI: the daemon must learn about it from systemd's signals.
+    systemctl(&["enable", &format!("{name}.service")]);
+    wait_for_list_line(&h, &name, "enabled", |l| l.contains(", enabled"));
+
+    systemctl(&["disable", &format!("{name}.service")]);
+    wait_for_list_line(&h, &name, "disabled", |l| l.contains("disabled"));
+
+    systemctl(&["stop", &format!("{name}.service")]);
+    wait_for_list_line(&h, &name, "stopped", |l| l.contains("stopped"));
+
+    // Our own CLI goes through D-Bus as well.
+    h.ok(&["service", "start", &name]);
+    wait_for_list_line(&h, &name, "running", |l| l.contains("running"));
+
+    h.ok(&["service", "delete", &name]);
+    assert!(h.sessions().is_empty());
 }
 
 #[test]

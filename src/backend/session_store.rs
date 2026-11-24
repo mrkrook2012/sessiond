@@ -39,10 +39,52 @@ impl SessionStore {
         Ok(dir)
     }
  
+    /// Writes the unit file. The caller must reload systemd afterwards.
     pub fn create_service(&mut self, yaml_path: &PathBuf, unit: UnitName) -> Result<()> {
         self.systemd_manager.create_service_from_yaml(yaml_path, unit)
     }
  
+    /// Finds sysd sessions that exist on disk (YAML + unit file) so they can be
+    /// registered as stopped sessions when the daemon starts.
+    ///
+    /// YAML files without a unit file are plain exports/leftovers and are skipped,
+    /// as are files that fail to parse. Duplicate unit names keep the first match.
+    pub fn discover_sysd_sessions(&self) -> Result<Vec<StoredSysdSession>> {
+        let mut found: Vec<StoredSysdSession> = Vec::new();
+
+        for path in self.yaml_manager.list_session_files()? {
+            let yaml = match self.yaml_manager.load_session(path.clone()) {
+                Ok(yaml) => yaml,
+                Err(e) => {
+                    eprintln!("Skipping {}: failed to parse ({e})", path.display());
+                    continue;
+                }
+            };
+
+            let unit = match UnitName::new(&yaml.name) {
+                Ok(unit) => unit,
+                Err(e) => {
+                    eprintln!("Skipping {}: invalid unit name ({e})", path.display());
+                    continue;
+                }
+            };
+
+            if !self.systemd_manager.unit_file_exists(&unit) {
+                eprintln!("Skipping {}: no unit file for '{}'", path.display(), unit.to_string());
+                continue;
+            }
+
+            if found.iter().any(|s| s.unit == unit) {
+                eprintln!("Skipping {}: duplicate of unit '{}'", path.display(), unit.to_string());
+                continue;
+            }
+
+            found.push(StoredSysdSession { unit });
+        }
+
+        Ok(found)
+    }
+
     /// Removes both the unit file and the YAML file.
     pub fn delete(&mut self, name: &str) -> Result<()> {
         self.systemd_manager.remove_sysd_service_file(name)?;
@@ -50,4 +92,8 @@ impl SessionStore {
         Ok(())
     }
 }
- 
+
+/// A sysd session found on disk at daemon startup.
+pub struct StoredSysdSession {
+    pub unit: UnitName,
+}

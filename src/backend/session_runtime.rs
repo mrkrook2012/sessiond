@@ -3,7 +3,7 @@ use crate::backend::terminal_manager::{TerminalId, TerminalManager};
 use crate::backend::window_manager::{WindowId, WindowManager};
 use crate::backend::mini_user_manager::MiniUserManager;
 use crate::backend::yaml::models::{YamlSession, YamlWindow};
-use crate::ipc::protocol::{SessionInfo, SysdAction, TerminalUpdate};
+use crate::ipc::protocol::{SessionInfo, TerminalUpdate};
 use color_eyre::eyre::{OptionExt, Result, bail, eyre};
 
 /// Everything that concerns *live* state: users, terminals, windows and sessions.
@@ -148,8 +148,12 @@ impl SessionRuntime {
         }
     }
 
-    pub fn add_stopped_sysd_session(&mut self, unit: UnitName) {
-        self.session_manager.create_stopped_sysd_session(unit);
+    pub fn add_stopped_sysd_session(&mut self, unit: UnitName, enabled: bool) {
+        self.session_manager.create_stopped_sysd_session(unit, enabled);
+    }
+
+    pub fn session_name_exists(&self, name: &str) -> bool {
+        self.session_manager.does_session_name_exist(name)
     }
 
     pub fn create_window(&mut self, id: SessionId) -> Result<SessionInfo> {
@@ -217,28 +221,42 @@ impl SessionRuntime {
         Ok(())
     }
 
-    // ---------------------------------------------------------------- sysd actions
+    // ---------------------------------------------------------------- sysd state
 
-    pub fn execute_sysd_action(&mut self, id: SessionId, action: SysdAction) -> Result<()> {
+    /// The unit behind a sysd session. Errors for ephemeral sessions.
+    pub fn sysd_unit(&self, id: SessionId) -> Result<UnitName> {
         let session = self
             .session_manager
-            .get_session_by_id_mut(id)
+            .get_session_by_id(id)
             .ok_or_eyre("Session not found")?;
 
-        match &mut session.kind {
+        match &session.kind {
             SessionKind::Ephemoral { .. } => {
                 bail!("Cannot call sysd operation on non-sysd session")
             }
-            SessionKind::SysdBased(sysd_session) => match action {
-                SysdAction::Start => sysd_session.start(),
-                SysdAction::Stop => sysd_session.stop(),
-                SysdAction::Restart => sysd_session.restart(),
-                SysdAction::Enable => sysd_session.enable(),
-                SysdAction::Disable => sysd_session.disable(),
-            },
+            SessionKind::SysdBased(sysd_session) => Ok(sysd_session.unit().clone()),
         }
+    }
 
-        Ok(())
+    pub fn sysd_units(&self) -> Vec<UnitName> {
+        self.session_manager.sysd_units()
+    }
+
+    pub fn set_sysd_enabled(&mut self, unit: &UnitName, enabled: bool) {
+        if let Some((_, sysd)) = self.session_manager.get_sysd_session_by_unit_mut(unit) {
+            sysd.set_enabled(enabled);
+        }
+    }
+
+    /// systemd reports the unit as no longer active: stop the session if it is still running.
+    pub fn handle_unit_deactivated(&mut self, unit: &UnitName) {
+        let Some((id, sysd)) = self.session_manager.get_sysd_session_by_unit_mut(unit) else {
+            return;
+        };
+        if sysd.is_running() {
+            println!("Unit {} went inactive, stopping session", unit.to_string());
+            let _ = self.stop_sysd_session(id);
+        }
     }
 
     // ---------------------------------------------------------------- queries

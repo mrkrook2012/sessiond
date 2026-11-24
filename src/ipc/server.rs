@@ -10,8 +10,8 @@ use tarpc::{
 use tokio::sync::Mutex;
 
 use crate::backend::{
-    deamon_manager::DaemonManager, session_manager::SessionId, terminal_manager::TerminalId,
-    window_manager::WindowId,
+    deamon_manager::DaemonManager, session_manager::SessionId, systemd_client::SystemdClient,
+    terminal_manager::TerminalId, window_manager::WindowId,
 };
 use crate::ipc::{
     consts::socket_path,
@@ -22,15 +22,36 @@ use crate::ipc::{
 #[derive(Clone)]
 pub struct DaemonRpcServer {
     manager: Arc<Mutex<DaemonManager>>,
+    /// `None` when the session bus / user systemd is not reachable (e.g. in CI).
+    systemd: Option<SystemdClient>,
 }
 
 impl DaemonRpcServer {
-    pub fn new(manager: DaemonManager) -> Self {
-        Self {
-            manager: Arc::new(Mutex::new(manager)),
+    pub fn new(manager: Arc<Mutex<DaemonManager>>, systemd: Option<SystemdClient>) -> Self {
+        Self { manager, systemd }
+    }
+
+    fn systemd(&self) -> Result<&SystemdClient, String> {
+        self.systemd
+            .as_ref()
+            .ok_or_else(|| "systemd is not available".to_string())
+    }
+
+    /// `daemon-reload` after unit files changed. Not fatal: the file is already written.
+    async fn reload_systemd(&self) {
+        match &self.systemd {
+            Some(systemd) => {
+                if let Err(e) = systemd.reload().await {
+                    eprintln!("{e:#}");
+                }
+            }
+            None => eprintln!("systemd not available, skipping daemon-reload"),
         }
     }
 }
+
+// Note on locking: systemd calls are made *without* holding the manager lock.
+// Starting/stopping a unit runs its ExecStart/ExecStop, which call back into this daemon.
 
 impl DaemonService for DaemonRpcServer {
     async fn get_wanted_data(self, _: context::Context, terminal_id: TerminalId) -> TerminalUpdate {
@@ -66,8 +87,13 @@ impl DaemonService for DaemonRpcServer {
         command: Option<String>,
         name: Option<String>,
     ) -> Vec<SessionInfo> {
-        let mut manager = self.manager.lock().await;
-        manager.handle_create_sysd_session(working_dir, command, name)
+        let sessions = self
+            .manager
+            .lock()
+            .await
+            .handle_create_sysd_session(working_dir, command, name);
+        self.reload_systemd().await;
+        sessions
     }
 
     async fn exit_session(self, _: context::Context) -> Vec<SessionInfo> {
@@ -122,8 +148,13 @@ impl DaemonService for DaemonRpcServer {
         _: context::Context,
         id: SessionId,
     ) -> Result<(), String> {
-        let mut manager = self.manager.lock().await;
-        manager.handle_export_session(id).map_err(|e| e.to_string())
+        self.manager
+            .lock()
+            .await
+            .handle_export_session(id)
+            .map_err(|e| e.to_string())?;
+        self.reload_systemd().await;
+        Ok(())
     }
 
     async fn start_session_from_file(
@@ -160,10 +191,33 @@ impl DaemonService for DaemonRpcServer {
         id: SessionId,
         sysd_action: SysdAction,
     ) -> Result<Vec<SessionInfo>, String> {
+        let unit = self
+            .manager
+            .lock()
+            .await
+            .sysd_unit(id)
+            .map_err(|e| e.to_string())?;
+        let systemd = self.systemd()?;
+
+        let result = match sysd_action {
+            SysdAction::Start => systemd.start(&unit).await,
+            SysdAction::Stop => systemd.stop(&unit).await,
+            SysdAction::Restart => systemd.restart(&unit).await,
+            SysdAction::Enable => systemd.enable(&unit).await,
+            SysdAction::Disable => systemd.disable(&unit).await,
+        };
+        result.map_err(|e| format!("{e:#}"))?;
+
         let mut manager = self.manager.lock().await;
-        manager
-            .handle_execute_sysd_action(id, sysd_action)
-            .map_err(|e| e.to_string())
+
+        // The event watcher picks this up as well, but set it now so the reply is accurate.
+        match sysd_action {
+            SysdAction::Enable => manager.set_sysd_enabled(&unit, true),
+            SysdAction::Disable => manager.set_sysd_enabled(&unit, false),
+            _ => {}
+        }
+
+        Ok(manager.get_all_session_info())
     }
 
     async fn start_sysd_session_from_file(
@@ -186,19 +240,45 @@ impl DaemonService for DaemonRpcServer {
 
     async fn delete_sysd_session(
         self,
-        context: ::tarpc::context::Context,
+        _: context::Context,
         id: SessionId,
     ) -> Result<Vec<SessionInfo>, String> {
-        let mut manager = self.manager.lock().await;
-        manager
+        let unit = self
+            .manager
+            .lock()
+            .await
+            .sysd_unit(id)
+            .map_err(|e| e.to_string())?;
+
+        // Best effort: take the unit out of systemd before its file disappears.
+        // Disable needs the unit file to still exist.
+        if let Some(systemd) = &self.systemd {
+            if let Err(e) = systemd.disable(&unit).await {
+                eprintln!("{e:#}");
+            }
+            if let Err(e) = systemd.stop(&unit).await {
+                eprintln!("{e:#}");
+            }
+        }
+
+        let sessions = self
+            .manager
+            .lock()
+            .await
             .handle_delete_sysd_session(id)
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+
+        self.reload_systemd().await;
+        Ok(sessions)
     }
 
 }
 
-pub async fn run_server(manager: DaemonManager) -> Result<()> {
-    let server = DaemonRpcServer::new(manager);
+pub async fn run_server(
+    manager: Arc<Mutex<DaemonManager>>,
+    systemd: Option<SystemdClient>,
+) -> Result<()> {
+    let server = DaemonRpcServer::new(manager, systemd);
 
     let mut listener =
         tarpc::serde_transport::unix::listen(socket_path(), Bincode::default).await?;

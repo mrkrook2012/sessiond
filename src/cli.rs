@@ -282,28 +282,17 @@ async fn handle_run(systemd: bool, name: Option<String>, command: Vec<String>) -
     };
     eprintln!("Starting {kind}: {name} (running: {command})");
 
-    let sessions = if systemd {
-        let sessions = rpc
-            .create_sysd_session(working_dir, Some(command), Some(name.clone()))
+    if systemd {
+        rpc.create_sysd_session(working_dir, Some(command), Some(name.clone()))
             .await?;
-        Command::new("systemctl")
-            .arg("--user")
-            .arg("start")
-            .arg(format!("{}.service", name))
-            .output()
-            .unwrap();
-        sessions
+
+        // The daemon starts the unit through systemd; its ExecStart then spawns the windows.
+        let id = find_session_id(&rpc, &name).await?;
+        rpc.execute_sysd_action(id, SysdAction::Start).await?;
     } else {
         rpc.create_session(working_dir, Some(command), Some(name.clone()))
-            .await?
-    };
-
-    // let session = sessions
-    //     .iter()
-    //     .find(|session| session.name == name)
-    //     .ok_or_else(|| eyre!("Failed to find newly created {kind} in list"))?;
-
-    // println!("Created {kind}: {}", session.name);
+            .await?;
+    }
 
     Ok(())
 }
@@ -322,7 +311,15 @@ async fn handle_list_sessions(names_only: bool) -> Result<()> {
         println!("Active sessions:");
 
         for session in sessions {
-            println!("- {}", session.name);
+            match session.sysd_data {
+                Some(sysd) => println!(
+                    "- {} [service, {}, {}]",
+                    session.name,
+                    if sysd.running { "running" } else { "stopped" },
+                    if sysd.enabled { "enabled" } else { "disabled" },
+                ),
+                None => println!("- {}", session.name),
+            }
         }
     }
 
@@ -549,9 +546,19 @@ async fn handle_internal_systemd_start(file_path: PathBuf) -> Result<()> {
 }
 
 /// Stops a systemd-managed session. Does not start the daemon.
+/// A missing daemon or session is not an error: there is nothing left to stop,
+/// and failing here would leave the unit in the `failed` state.
 async fn handle_internal_systemd_stop(name: String) -> Result<()> {
+    if !daemon_running() {
+        println!("Daemon not running, nothing to stop for {name}");
+        return Ok(());
+    }
+
     let rpc = connect().await?;
-    let id = find_session_id(&rpc, &name).await?;
+    let Ok(id) = find_session_id(&rpc, &name).await else {
+        println!("No session named {name}, nothing to stop");
+        return Ok(());
+    };
 
     println!("Stopping systemd session: {name}");
 
