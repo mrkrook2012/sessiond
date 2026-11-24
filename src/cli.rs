@@ -45,8 +45,13 @@ pub enum Commands {
     },
     /// Lists all active sessions
     List {
+        /// Print only the names, one per line
         #[arg(long)]
         names: bool,
+
+        /// Only list systemd-based sessions
+        #[arg(long)]
+        services: bool,
     },
     // TODO Fix this
     /// Attaches to an existing session by name
@@ -67,22 +72,34 @@ pub enum Commands {
     Export {
         name: String,
 
-        #[arg(short, long)]
+        #[arg(short, long, value_hint = clap::ValueHint::DirPath)]
         dir: Option<PathBuf>,
     },
     /// Starts an ephemeral session from a config file
-    Import { file: PathBuf },
+    Import {
+        #[arg(value_hint = clap::ValueHint::FilePath)]
+        file: PathBuf,
+    },
     /// Manages the daemon process
     Daemon {
         #[command(subcommand)]
         action: DaemonCommands,
     },
+    /// Prints a shell completion script.
+    ///
+    /// fish: daemon_test completions fish > ~/.config/fish/completions/daemon_test.fish
+    Completions { shell: CompletionShell },
 
     // Internal commands, invoked by the generated systemd units.
     #[command(name = "__internal-systemd-start", hide = true)]
     InternalSystemdStart { config: PathBuf },
     #[command(name = "__internal-systemd-stop", hide = true)]
     InternalSystemdStop { name: String },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum CompletionShell {
+    Fish,
 }
 
 #[derive(Subcommand)]
@@ -124,7 +141,7 @@ pub async fn dispatch(command: Commands) -> Result<()> {
             name,
             command,
         } => handle_run(systemd, name, command).await,
-        Commands::List { names } => handle_list_sessions(names).await,
+        Commands::List { names, services } => handle_list_sessions(names, services).await,
         Commands::Attach { name } => handle_attach_session(name).await,
         Commands::Kill { name, all } => match (name, all) {
             (_, true) => handle_kill_all_sessions().await,
@@ -139,6 +156,10 @@ pub async fn dispatch(command: Commands) -> Result<()> {
             DaemonCommands::Stop => handle_daemon_stop().await,
             DaemonCommands::Status => handle_daemon_status(),
         },
+        Commands::Completions { shell } => {
+            print_completions(shell);
+            Ok(())
+        }
         Commands::InternalSystemdStart { config } => handle_internal_systemd_start(config).await,
         Commands::InternalSystemdStop { name } => handle_internal_systemd_stop(name).await,
     }
@@ -297,9 +318,13 @@ async fn handle_run(systemd: bool, name: Option<String>, command: Vec<String>) -
     Ok(())
 }
 
-async fn handle_list_sessions(names_only: bool) -> Result<()> {
+async fn handle_list_sessions(names_only: bool, services_only: bool) -> Result<()> {
     let rpc = connect().await?;
-    let sessions = list_sessions(&rpc).await?;
+    let mut sessions = list_sessions(&rpc).await?;
+
+    if services_only {
+        sessions.retain(|session| session.sysd_data.is_some());
+    }
 
     if names_only {
         for session in sessions {
@@ -465,6 +490,43 @@ async fn handle_import(file: PathBuf) -> Result<()> {
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Shell completions
+// ---------------------------------------------------------------------------
+
+/// Name the completions are registered for: the installed binary.
+const BIN_NAME: &str = "daemon_test";
+
+/// The generated script covers subcommands and flags; `FISH_DYNAMIC` adds what clap
+/// cannot know: live session names, and the command wrapped by `run`.
+fn print_completions(shell: CompletionShell) {
+    use clap::CommandFactory;
+    use std::io::Write;
+
+    let mut stdout = std::io::stdout();
+    match shell {
+        CompletionShell::Fish => {
+            let mut generated = Vec::new();
+            clap_complete::generate(
+                clap_complete::Shell::Fish,
+                &mut Cli::command(),
+                BIN_NAME,
+                &mut generated,
+            );
+
+            // clap_complete also offers hidden subcommands; the internal ones are for systemd only.
+            for line in String::from_utf8_lossy(&generated).lines() {
+                if !line.contains("-a \"__internal-") {
+                    let _ = writeln!(stdout, "{line}");
+                }
+            }
+            let _ = write!(stdout, "{FISH_DYNAMIC}");
+        }
+    }
+}
+
+const FISH_DYNAMIC: &str = include_str!("completions/dynamic.fish");
 
 // ---------------------------------------------------------------------------
 // Daemon commands
