@@ -1,3 +1,4 @@
+use tracing::{debug, error, trace, warn};
 use portable_pty::{Child, MasterPty, PtyPair, PtySize, native_pty_system};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex, RwLock};
@@ -71,6 +72,7 @@ impl Callbacks for ShellHooks {
             (Some(b"P"), Some(pwd)) => *self.current_pwd.write().unwrap() = pwd,
             (Some(b"T"), Some(code)) => {
                 let code = code.trim().parse().unwrap_or(-1);
+                debug!(terminal = ?self.terminal_id, code, "Tracked command exited");
                 // The receiver only disappears when the daemon is shutting down.
                 let _ = self.events.send(TerminalEvent::TrackedCommandExited {
                     terminal_id: self.terminal_id,
@@ -122,6 +124,7 @@ impl VirtualTerminal {
             .expect("failed to spawn shell");
 
         let writer = pair.master.take_writer().expect("failed to take pty writer");
+        debug!(terminal = ?id, shell_pid = ?child.process_id(), "Spawned shell");
 
         let current_command = Arc::new(RwLock::new(String::new()));
         let current_pwd = Arc::new(RwLock::new(String::new()));
@@ -170,7 +173,7 @@ impl VirtualTerminal {
         let deadline = Instant::now() + SHELL_STARTUP_TIMEOUT;
         while self.parser.lock().unwrap().screen().contents().is_empty() {
             if Instant::now() >= deadline {
-                eprintln!("Terminal {:?}: shell printed nothing during startup", self.id);
+                warn!(terminal = ?self.id, "Shell printed nothing during startup");
                 return;
             }
             std::thread::sleep(Duration::from_millis(20));
@@ -183,7 +186,7 @@ impl VirtualTerminal {
             .write_all(bytes)
             .and_then(|_| self.writer.flush());
         if let Err(e) = result {
-            eprintln!("Terminal {:?}: write failed: {e}", self.id);
+            warn!(terminal = ?self.id, "Write to terminal failed: {e}");
         }
     }
 
@@ -207,6 +210,7 @@ impl VirtualTerminal {
 
     /// Runs `command`, and emits `TrackedCommandExited` once it returns to the prompt.
     pub fn run_tracked(&mut self, command: String) {
+        debug!(terminal = ?self.id, %command, "Running tracked command");
         self.execute_command(format!("__osc133_track; {command}"));
     }
 
@@ -258,7 +262,7 @@ impl VirtualTerminal {
             pixel_width: 0,
         });
         if let Err(e) = result {
-            eprintln!("Terminal {:?}: resize failed: {e}", self.id);
+            warn!(terminal = ?self.id, "Resize failed: {e}");
         }
     }
 }
@@ -308,6 +312,8 @@ fn terminate(id: TerminalId, mut child: Box<dyn Child + Send + Sync>, master: &d
         }
     }
 
+    debug!(terminal = ?id, ?groups, "Terminating shell");
+
     // An interactive bash ignores SIGTERM but exits on SIGHUP (and forwards it to its jobs).
     signal_groups(&groups, libc::SIGHUP);
     signal_groups(&groups, libc::SIGTERM);
@@ -315,7 +321,8 @@ fn terminate(id: TerminalId, mut child: Box<dyn Child + Send + Sync>, master: &d
     std::thread::spawn(move || {
         let deadline = Instant::now() + TERMINATE_GRACE;
         while Instant::now() < deadline {
-            if matches!(child.try_wait(), Ok(Some(_))) {
+            if let Ok(Some(status)) = child.try_wait() {
+                trace!(terminal = ?id, ?status, "Shell exited");
                 // The shell is gone; make sure its command is too.
                 signal_groups(&groups, libc::SIGKILL);
                 return;
@@ -323,9 +330,10 @@ fn terminate(id: TerminalId, mut child: Box<dyn Child + Send + Sync>, master: &d
             std::thread::sleep(Duration::from_millis(20));
         }
 
+        debug!(terminal = ?id, "Shell did not exit in time, sending SIGKILL");
         signal_groups(&groups, libc::SIGKILL);
         if let Err(e) = child.wait() {
-            eprintln!("Terminal {id:?}: failed to reap shell: {e}");
+            error!(terminal = ?id, "Failed to reap shell: {e}");
         }
     });
 }
@@ -340,7 +348,7 @@ fn signal_groups(groups: &[libc::pid_t], signal: libc::c_int) {
             let error = std::io::Error::last_os_error();
             // ESRCH: the group is already gone.
             if error.raw_os_error() != Some(libc::ESRCH) {
-                eprintln!("Failed to signal process group {pgid}: {error}");
+                warn!("Failed to signal process group {pgid}: {error}");
             }
         }
     }

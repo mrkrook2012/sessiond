@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use color_eyre::Result;
 use color_eyre::eyre::eyre;
+use tracing::info;
 
 use std::fs::{self, File};
 use std::path::PathBuf;
@@ -25,6 +26,10 @@ const LOG_DIR_ENV_VAR: &str = "DAEMON_TEST_LOG_DIR";
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
+
+    /// -v info, -vv debug, -vvv trace; -q errors only. RUST_LOG overrides this.
+    #[command(flatten)]
+    pub verbose: clap_verbosity_flag::Verbosity<clap_verbosity_flag::WarnLevel>,
 }
 
 #[derive(Subcommand)]
@@ -227,12 +232,12 @@ async fn find_session_id(rpc: &DaemonClient, name: &str) -> Result<SessionId> {
 
 /// Start the daemon in the background if necessary and wait until it accepts
 /// connections. Progress messages go to stderr.
-async fn ensure_daemon_running() -> Result<()> {
+pub async fn ensure_daemon_running() -> Result<()> {
     if daemon_running() {
         return Ok(());
     }
 
-    eprintln!("Daemon not running. Starting daemon...");
+    info!("Daemon not running, starting it");
 
     let log_dir = std::env::var_os(LOG_DIR_ENV_VAR)
         .map(PathBuf::from)
@@ -243,6 +248,7 @@ async fn ensure_daemon_running() -> Result<()> {
 
     let mut child = Command::new(std::env::current_exe()?)
         .args(["daemon", "start"])
+        .args(crate::logging::verbosity_args())
         .stdout(stdout)
         .stderr(stderr)
         .spawn()
@@ -269,7 +275,7 @@ async fn ensure_daemon_running() -> Result<()> {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
-    eprintln!("Started daemon successfully");
+    info!("Daemon started");
     Ok(())
 }
 
@@ -301,7 +307,7 @@ async fn handle_run(systemd: bool, name: Option<String>, command: Vec<String>) -
     } else {
         "session"
     };
-    eprintln!("Starting {kind}: {name} (running: {command})");
+    info!("Starting {kind} '{name}' running: {command}");
 
     if systemd {
         rpc.create_sysd_session(working_dir, Some(command), Some(name.clone()))
@@ -482,7 +488,7 @@ async fn handle_import(file: PathBuf) -> Result<()> {
         ));
     }
 
-    eprintln!("Starting session from config file: {}", file.display());
+    info!("Starting session from config file {}", file.display());
 
     rpc.start_session_from_file(absolute_path).await?;
 
@@ -595,15 +601,12 @@ async fn handle_internal_systemd_start(file_path: PathBuf) -> Result<()> {
     ensure_daemon_running().await?;
     let rpc = connect().await?;
 
-    eprintln!(
-        "Starting systemd session from config file: {}",
-        absolute_path.display()
-    );
+    info!("Starting systemd session from {}", absolute_path.display());
 
     let yaml_name = session_name_from_config(&absolute_path)?;
     let run = rpc.start_sysd_session_from_file(absolute_path).await?;
 
-    println!("Systemd session '{yaml_name}' started, waiting for it to end");
+    info!("Systemd session '{yaml_name}' started, waiting for it to end");
 
     // Stay alive for as long as the session runs: this process is the unit's main process.
     // Exiting with an error makes systemd (Restart=on-failure) restart the unit.
@@ -620,11 +623,11 @@ async fn handle_internal_systemd_start(file_path: PathBuf) -> Result<()> {
                 ));
             }
             SysdWaitStatus::Ended => {
-                println!("Systemd session '{yaml_name}' ended");
+                info!("Systemd session '{yaml_name}' ended");
                 return Ok(());
             }
             SysdWaitStatus::ShuttingDown => {
-                println!("Daemon is shutting down, stopping '{yaml_name}'");
+                info!("Daemon is shutting down, stopping '{yaml_name}'");
                 return Ok(());
             }
         }
@@ -643,21 +646,21 @@ fn session_name_from_config(path: &std::path::Path) -> Result<String> {
 /// and failing here would leave the unit in the `failed` state.
 async fn handle_internal_systemd_stop(name: String) -> Result<()> {
     if !daemon_running() {
-        println!("Daemon not running, nothing to stop for {name}");
+        info!("Daemon not running, nothing to stop for '{name}'");
         return Ok(());
     }
 
     let rpc = connect().await?;
     let Ok(id) = find_session_id(&rpc, &name).await else {
-        println!("No session named {name}, nothing to stop");
+        info!("No session named '{name}', nothing to stop");
         return Ok(());
     };
 
-    println!("Stopping systemd session: {name}");
+    info!("Stopping systemd session '{name}'");
 
     rpc.stop_sysd_session(id).await?;
 
-    println!("Systemd session stopped successfully: {name}");
+    info!("Systemd session '{name}' stopped");
 
     Ok(())
 }

@@ -1,3 +1,4 @@
+use tracing::{info, warn};
 use std::time::Duration;
 
 use crate::backend::session_manager::{
@@ -304,14 +305,15 @@ impl SessionRuntime {
         };
 
         if manual {
-            println!(
-                "Tracked command in '{}' exited with {code} after user input, not restarting",
-                session.name
+            info!(
+                session = %session.name,
+                code,
+                "Tracked command exited shortly after user input; treating it as a manual stop, not restarting"
             );
             return false;
         }
 
-        println!("Tracked command in '{}' exited with {code}", session.name);
+        warn!(session = %session.name, code, "Tracked command exited, session will be restarted");
         sysd.record_tracked_exit(code);
         true
     }
@@ -348,7 +350,7 @@ impl SessionRuntime {
             return;
         };
         if sysd.is_running() {
-            println!("Unit {} went inactive, stopping session", unit.to_string());
+            info!(unit = %unit.to_string(), "Unit went inactive, stopping its session");
             let _ = self.stop_sysd_session(id);
         }
     }

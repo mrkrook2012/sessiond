@@ -1,3 +1,4 @@
+use tracing::{debug, info};
 use std::path::PathBuf;
 
 use crate::backend::mini_user_manager::MiniUserManager;
@@ -80,6 +81,7 @@ impl DaemonManager {
     /// First half of a requested shutdown: lets waiting `__internal-systemd-start`
     /// processes exit cleanly, so systemd does not restart them (and with them, the daemon).
     pub fn begin_shutdown(&mut self) {
+        info!("Shutdown requested");
         self.shutting_down = true;
         self.notify_changed();
     }
@@ -145,6 +147,7 @@ impl DaemonManager {
 
     pub fn handle_kill_session(&mut self, id: SessionId) -> Vec<SessionInfo> {
         self.runtime.kill_session(id);
+        debug!(?id, "Killed session");
         self.notify_changed();
         self.runtime.all_session_info()
     }
@@ -155,6 +158,7 @@ impl DaemonManager {
         command: Option<String>,
         name: Option<String>,
     ) -> Vec<SessionInfo> {
+        debug!(?name, ?command, "Creating session");
         self.runtime
             .create_ephemeral_session(working_dir, command, name);
         self.runtime.all_session_info()
@@ -162,6 +166,7 @@ impl DaemonManager {
 
     pub fn handle_stop_sysd_session(&mut self, id: SessionId) -> Result<()> {
         self.runtime.stop_sysd_session(id)?;
+        info!(?id, "Stopped sysd session");
         self.notify_changed();
         Ok(())
     }
@@ -192,6 +197,7 @@ impl DaemonManager {
         let yaml = self.store.load(file_path)?;
 
         let windows = self.runtime.spawn_windows(yaml.windows, false);
+        info!(session = %yaml.name, "Started session from file");
         self.runtime.add_ephemeral_session(yaml.name, windows);
 
         Ok(())
@@ -204,7 +210,8 @@ impl DaemonManager {
         let name = UnitName::new(&yaml.name)?;
 
         let windows = self.runtime.spawn_windows(yaml.windows, true);
-        let run = self.runtime.start_or_create_sysd_session(name, windows)?;
+        let run = self.runtime.start_or_create_sysd_session(name.clone(), windows)?;
+        info!(session = %name.to_string(), ?run, "Started sysd session");
         self.notify_changed();
 
         Ok(run)
@@ -273,7 +280,7 @@ impl DaemonManager {
             if self.runtime.session_name_exists(&stored.unit.to_string()) {
                 continue;
             }
-            println!("Registering stopped sysd session '{}'", stored.unit.to_string());
+            debug!("Registering stopped sysd session '{}'", stored.unit.to_string());
             // The enabled state is filled in by the systemd event watcher once it connects.
             self.runtime.add_stopped_sysd_session(stored.unit, false);
             registered += 1;
@@ -302,6 +309,7 @@ impl DaemonManager {
 
         // Do the fallible disk work first so a failure leaves live state untouched.
         let removed = self.store.delete(unit)?;
+        info!(unit = %unit.to_string(), files = removed.len(), "Deleted sysd session");
 
         match session {
             Some(id) => {

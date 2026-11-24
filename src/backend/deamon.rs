@@ -1,3 +1,4 @@
+use tracing::{error, info, warn};
 use std::sync::Arc;
 
 use color_eyre::eyre::Result;
@@ -33,13 +34,13 @@ pub async fn run_daemon() -> Result<()> {
         yaml_manager
     );
 
-    println!("Starting daemon");
+    info!(pid = std::process::id(), "Starting daemon");
 
     // Pick up sysd sessions that exist on disk but were never started by this daemon.
     // A failure here should not keep the daemon from starting.
     match daemon_manager.register_stored_sysd_sessions() {
-        Ok(count) => println!("Registered {count} stored sysd session(s)"),
-        Err(e) => eprintln!("Failed to scan for stored sysd sessions: {e}"),
+        Ok(count) => info!("Registered {count} stored sysd session(s)"),
+        Err(e) => error!("Failed to scan for stored sysd sessions: {e:#}"),
     }
 
     let daemon_manager = Arc::new(Mutex::new(daemon_manager));
@@ -59,13 +60,13 @@ pub async fn run_daemon() -> Result<()> {
             let watcher_manager = daemon_manager.clone();
             tokio::spawn(async move {
                 if let Err(e) = watch_events(watcher_client, watcher_manager).await {
-                    eprintln!("systemd event watcher stopped: {e:#}");
+                    error!("systemd event watcher stopped: {e:#}");
                 }
             });
             Some(client)
         }
         Err(e) => {
-            eprintln!("systemd integration disabled: {e:#}");
+            warn!("systemd integration disabled: {e:#}");
             None
         }
     };

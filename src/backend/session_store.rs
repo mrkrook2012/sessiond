@@ -1,3 +1,4 @@
+use tracing::{debug, info, warn};
 use std::path::PathBuf;
  
 use crate::backend::session_manager::UnitName;
@@ -57,7 +58,7 @@ impl SessionStore {
             let yaml = match self.yaml_manager.load_session(path.clone()) {
                 Ok(yaml) => yaml,
                 Err(e) => {
-                    eprintln!("Skipping {}: failed to parse ({e})", path.display());
+                    warn!("Skipping {}: failed to parse ({e})", path.display());
                     continue;
                 }
             };
@@ -65,18 +66,19 @@ impl SessionStore {
             let unit = match UnitName::new(&yaml.name) {
                 Ok(unit) => unit,
                 Err(e) => {
-                    eprintln!("Skipping {}: invalid unit name ({e})", path.display());
+                    warn!("Skipping {}: invalid unit name ({e})", path.display());
                     continue;
                 }
             };
 
             if !self.systemd_manager.unit_file_exists(&unit) {
-                eprintln!("Skipping {}: no unit file for '{}'", path.display(), unit.to_string());
+                // Normal for exported sessions that were never turned into a service.
+                debug!("Skipping {}: no unit file for '{}'", path.display(), unit.to_string());
                 continue;
             }
 
             if found.iter().any(|s| s.unit == unit) {
-                eprintln!("Skipping {}: duplicate of unit '{}'", path.display(), unit.to_string());
+                warn!("Skipping {}: duplicate of unit '{}'", path.display(), unit.to_string());
                 continue;
             }
 
@@ -101,7 +103,7 @@ impl SessionStore {
 
         for file in &files {
             match std::fs::remove_file(file) {
-                Ok(()) => println!("Deleted {}", file.display()),
+                Ok(()) => info!("Deleted {}", file.display()),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => {
                     return Err(color_eyre::eyre::eyre!(

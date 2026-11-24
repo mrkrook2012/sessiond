@@ -5,7 +5,7 @@ todo:
   - Add basic systemd integration V
   - Clean up Async work / networking V 
   - Add order to cli command structure V
-  - Add removing stale sysd services 
+  - Add removing stale sysd services V
 
   - Fix ctrl in terminal to skip words
   - Fix btop in terminal
@@ -13,12 +13,12 @@ todo:
   
   - Add process tracking based restart V
   - Add adding stale sysd services V
-  - Add daemon based duplicate name rejection
-  - Add event based sysd status tracking
+  - Add daemon based duplicate name rejection 
+  - Add event based sysd status tracking V
   - make CI/CD pipeline V
-  - Fish hints integration
+  - Fish hints integration V
   - Clean up CLI V
-  - Clean logging
+  - Clean logging V
   - Think of an actual name
   - Simple .deb release pipeline V
   - Multi user 
@@ -28,7 +28,6 @@ todo:
   - Improve startup robustness and error handling V
   - Understand the macro language
   - Clean up build warnings
-  - Look into supporting fish or zsh
 
 Sysd:
  start-Sysd

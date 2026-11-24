@@ -6,6 +6,7 @@
 //!   sysd sessions in `DaemonManager` in sync with what systemd reports, so a plain
 //!   `systemctl --user disable foo` or `systemctl --user stop foo` is reflected in the daemon.
 
+use tracing::{debug, trace, warn};
 use std::sync::Arc;
 
 use color_eyre::eyre::{Result, WrapErr};
@@ -42,6 +43,7 @@ impl SystemdClient {
     }
 
     pub async fn start(&self, unit: &UnitName) -> Result<()> {
+        debug!(unit = %service_name(unit), "systemd: start");
         self.manager
             .start_unit(service_name(unit), JOB_MODE.into())
             .await
@@ -50,6 +52,7 @@ impl SystemdClient {
     }
 
     pub async fn stop(&self, unit: &UnitName) -> Result<()> {
+        debug!(unit = %service_name(unit), "systemd: stop");
         self.manager
             .stop_unit(service_name(unit), JOB_MODE.into())
             .await
@@ -58,6 +61,7 @@ impl SystemdClient {
     }
 
     pub async fn restart(&self, unit: &UnitName) -> Result<()> {
+        debug!(unit = %service_name(unit), "systemd: restart");
         self.manager
             .restart_unit(service_name(unit), JOB_MODE.into())
             .await
@@ -67,6 +71,7 @@ impl SystemdClient {
 
     /// Equivalent of `systemctl --user enable`: creates the install symlinks, then reloads.
     pub async fn enable(&self, unit: &UnitName) -> Result<()> {
+        debug!(unit = %service_name(unit), "systemd: enable");
         self.manager
             .enable_unit_files(vec![service_name(unit)], false, true)
             .await
@@ -76,6 +81,7 @@ impl SystemdClient {
 
     /// Equivalent of `systemctl --user disable`: removes the install symlinks, then reloads.
     pub async fn disable(&self, unit: &UnitName) -> Result<()> {
+        debug!(unit = %service_name(unit), "systemd: disable");
         self.manager
             .disable_unit_files(vec![service_name(unit)], false)
             .await
@@ -85,6 +91,7 @@ impl SystemdClient {
 
     /// Equivalent of `systemctl --user daemon-reload`.
     pub async fn reload(&self) -> Result<()> {
+        debug!("systemd: daemon-reload");
         self.manager
             .reload()
             .await
@@ -148,6 +155,8 @@ pub async fn watch_events(client: SystemdClient, manager: Arc<Mutex<DaemonManage
     let mut unit_properties =
         MessageStream::for_match_rule(rule, &signal_connection, Some(1024)).await?;
 
+    debug!("Watching systemd signals");
+
     // Units registered from disk at startup do not know their enabled state yet.
     refresh_enabled(&client, &manager).await;
 
@@ -169,7 +178,7 @@ pub async fn watch_events(client: SystemdClient, manager: Arc<Mutex<DaemonManage
         }
     }
 
-    eprintln!("systemd event stream ended");
+    warn!("systemd event stream ended; external systemctl changes are no longer tracked");
     Ok(())
 }
 
@@ -179,8 +188,11 @@ async fn refresh_enabled(client: &SystemdClient, manager: &Arc<Mutex<DaemonManag
 
     for unit in units {
         match client.is_enabled(&unit).await {
-            Ok(enabled) => manager.lock().await.set_sysd_enabled(&unit, enabled),
-            Err(e) => eprintln!("{e:#}"),
+            Ok(enabled) => {
+                trace!(unit = %unit.to_string(), enabled, "Refreshed enabled state");
+                manager.lock().await.set_sysd_enabled(&unit, enabled)
+            }
+            Err(e) => warn!("{e:#}"),
         }
     }
 }
@@ -205,6 +217,8 @@ async fn handle_properties_changed(message: zbus::Message, manager: &Arc<Mutex<D
     else {
         return;
     };
+
+    trace!(unit = %unit.to_string(), %active_state, "Unit state changed");
 
     if matches!(active_state.as_str(), "inactive" | "failed") {
         manager.lock().await.handle_unit_deactivated(&unit);

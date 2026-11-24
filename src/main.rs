@@ -1,14 +1,14 @@
 use clap::Parser;
 use color_eyre::Result;
-use std::fs::{self, File};
-use std::process::Command;
-use std::thread;
-use std::time::Duration;
+use std::fs;
 
 pub mod backend;
 pub mod cli;
 pub mod frontend;
 pub mod ipc;
+pub mod logging;
+
+use crate::ipc::consts::socket_path;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -18,44 +18,27 @@ async fn main() -> Result<()> {
         Some(cli::Commands::Daemon {
             action: cli::DaemonCommands::Start,
         }) => {
+            logging::init(cli.verbose.tracing_level_filter());
+
             // Clean up any stale socket file
-            let _ = fs::remove_file("/tmp/daemon_test.sock");
-            let result = crate::backend::deamon::run_daemon().await;
-            match result {
-                Ok(()) => {
-                    println!("Stopping daemon");
-                }
-                Err(e) => {
-                    eprintln!("Got an error while running the daemon, {}", e);
-                }
+            let _ = fs::remove_file(socket_path());
+
+            match crate::backend::deamon::run_daemon().await {
+                Ok(()) => tracing::info!("Daemon stopped"),
+                Err(e) => tracing::error!("Daemon failed: {e:#}"),
             }
-            return Ok(());
         }
         // Every other subcommand is handled by the cli module.
-        Some(command) => cli::dispatch(command).await?,
+        Some(command) => {
+            logging::init(cli.verbose.tracing_level_filter());
+            cli::dispatch(command).await?;
+        }
         None => {
-            // Original behavior: start daemon if not running, then run frontend
-            if fs::metadata("/tmp/daemon_test.sock").is_err() {
-                println!("Starting daemon");
-                let stdout = File::create("./daemon.out").unwrap();
-                let stderr = File::create("./daemon.err").unwrap();
-                let result = Command::new(std::env::current_exe().unwrap())
-                    .args(["daemon", "start"])
-                    .stdout(stdout)
-                    .stderr(stderr)
-                    .spawn();
+            // The TUI owns the terminal, so this process does not log to stderr.
+            // The daemon it starts still gets the requested log level.
+            let _ = logging::LEVEL_FOR_CHILDREN.set(cli.verbose.tracing_level_filter());
 
-                match result {
-                    Err(e) => {
-                        eprintln!("Error while starting Daemon {}", e);
-                    }
-                    Ok(_) => {
-                        println!("Started daemon successfully");
-                    }
-                }
-
-                thread::sleep(Duration::from_millis(1000));
-            }
+            cli::ensure_daemon_running().await?;
             crate::frontend::frontend::run_frontend().await?;
         }
     }

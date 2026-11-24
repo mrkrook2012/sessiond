@@ -1,3 +1,4 @@
+use tracing::{error, info, trace, warn};
 use std::sync::Arc;
 
 use color_eyre::eyre::Result;
@@ -47,10 +48,10 @@ impl DaemonRpcServer {
         match &self.systemd {
             Some(systemd) => {
                 if let Err(e) = systemd.reload().await {
-                    eprintln!("{e:#}");
+                    error!("{e:#}");
                 }
             }
-            None => eprintln!("systemd not available, skipping daemon-reload"),
+            None => warn!("systemd not available, skipping daemon-reload"),
         }
     }
 }
@@ -216,7 +217,10 @@ impl DaemonService for DaemonRpcServer {
             SysdAction::Enable => systemd.enable(&unit).await,
             SysdAction::Disable => systemd.disable(&unit).await,
         };
-        result.map_err(|e| format!("{e:#}"))?;
+        result.map_err(|e| {
+            warn!(unit = %unit.to_string(), ?sysd_action, "systemd action failed: {e:#}");
+            format!("{e:#}")
+        })?;
 
         let mut manager = self.manager.lock().await;
 
@@ -287,10 +291,10 @@ impl DaemonService for DaemonRpcServer {
         // Disable needs the unit file to still exist.
         if let Some(systemd) = self.systemd.as_ref().filter(|_| has_unit_file) {
             if let Err(e) = systemd.disable(&unit).await {
-                eprintln!("{e:#}");
+                warn!("{e:#}");
             }
             if let Err(e) = systemd.stop(&unit).await {
-                eprintln!("{e:#}");
+                warn!("{e:#}");
             }
         }
 
@@ -318,14 +322,18 @@ pub async fn run_server(
     let mut listener =
         tarpc::serde_transport::unix::listen(socket_path(), Bincode::default).await?;
 
-    println!("Daemon listening on {}", socket_path().display());
+    info!("Daemon listening on {}", socket_path().display());
 
     listener
         .filter_map(|result| async move {
             match result {
-                Ok(transport) => Some(transport),
+                Ok(transport) => {
+                    // Every liveness probe connects too, so this is trace, not debug.
+                    trace!("Client connected");
+                    Some(transport)
+                }
                 Err(error) => {
-                    eprintln!("Accept error: {error}");
+                    warn!("Failed to accept connection: {error}");
                     None
                 }
             }
