@@ -180,7 +180,7 @@ pub fn generate_random_name() -> String {
 }
 
 /// Quote a single argument so a shell reads it back as one word.
-fn shell_quote(arg: &str) -> String {
+pub fn shell_quote(arg: &str) -> String {
     let safe = !arg.is_empty()
         && arg
             .chars()
@@ -194,7 +194,7 @@ fn shell_quote(arg: &str) -> String {
 }
 
 /// Turn argv into one command line for the terminal.
-fn shell_join(args: &[String]) -> String {
+pub fn shell_join(args: &[String]) -> String {
     args.iter()
         .map(|arg| shell_quote(arg))
         .collect::<Vec<_>>()
@@ -635,7 +635,7 @@ async fn handle_internal_systemd_start(file_path: PathBuf) -> Result<()> {
 }
 
 /// The session name as the daemon stores it (the unit name, lowercased).
-fn session_name_from_config(path: &std::path::Path) -> Result<String> {
+pub fn session_name_from_config(path: &std::path::Path) -> Result<String> {
     let yaml: crate::backend::yaml::models::YamlSession =
         serde_yaml::from_str(&fs::read_to_string(path)?)?;
     Ok(crate::backend::session_manager::UnitName::new(&yaml.name)?.to_string())

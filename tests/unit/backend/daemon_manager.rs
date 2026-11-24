@@ -1,0 +1,291 @@
+//! `DaemonManager` without the RPC server. Everything here stays out of the real systemd
+//! unit directory: methods that write unit files are covered by `tests/e2e` instead.
+
+use std::fs;
+use std::path::PathBuf;
+
+use daemon_test::backend::deamon_manager::DaemonManager;
+use daemon_test::backend::mini_user_manager::MiniUserManager;
+use daemon_test::backend::session_manager::{RunId, SessionId, SessionManager, UnitName};
+use daemon_test::backend::systemd_service_manager::SystemdServiceManager;
+use daemon_test::backend::terminal_manager::TerminalManager;
+use daemon_test::backend::virtual_terminal::TerminalEvent;
+use daemon_test::backend::window_manager::WindowManager;
+use daemon_test::backend::yaml::yaml_manager::YamlManager;
+use daemon_test::ipc::protocol::{SessionInfo, SysdWaitStatus};
+use tempfile::TempDir;
+use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
+
+use crate::support::eventually;
+
+struct Fixture {
+    dir: TempDir,
+    manager: DaemonManager,
+    events: UnboundedReceiver<TerminalEvent>,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let dir = TempDir::new().unwrap();
+        let (events_tx, events) = unbounded_channel();
+        let manager = DaemonManager::new(
+            MiniUserManager::new(),
+            TerminalManager::new(events_tx),
+            WindowManager::new(),
+            SessionManager::new(),
+            SystemdServiceManager::new(),
+            YamlManager::with_dir(dir.path().join("data")).unwrap(),
+        );
+        Self { dir, manager, events }
+    }
+
+    /// Writes a session YAML outside the data dir and returns its path.
+    fn yaml(&self, name: &str, windows: &[(&str, bool)]) -> PathBuf {
+        let mut yaml = format!("name: {name}\nwindows:\n");
+        for (command, tracked) in windows {
+            yaml += &format!("- command: {command}\n  working_directory: /tmp\n  tracked: {tracked}\n");
+        }
+        let path = self.dir.path().join(format!("{name}.yaml"));
+        fs::write(&path, yaml).unwrap();
+        path
+    }
+
+    fn session(&self, name: &str) -> Option<SessionInfo> {
+        self.manager
+            .handle_list_sessions()
+            .into_iter()
+            .find(|s| s.name == name)
+    }
+
+    fn id(&self, name: &str) -> SessionId {
+        self.session(name).expect("session exists").id
+    }
+
+    fn status(&self, name: &str, run: RunId) -> SysdWaitStatus {
+        self.manager.sysd_wait_status(name, run).0
+    }
+}
+
+/// A unit name nobody has a unit file for, so lookups in the real unit dir find nothing.
+fn unique(prefix: &str) -> String {
+    format!("{prefix}-{}-{:?}", std::process::id(), std::thread::current().id())
+        .replace(['(', ')'], "")
+        .to_lowercase()
+}
+
+// ------------------------------------------------------------------ sessions
+
+#[test]
+fn create_list_and_kill_ephemeral_sessions() {
+    let mut f = Fixture::new();
+    let after_create = f
+        .manager
+        .handle_create_session("/tmp".into(), Some("true".into()), Some("eph".into()));
+    assert_eq!(after_create.len(), 1);
+
+    let id = f.id("eph");
+    assert!(f.manager.handle_kill_session(id).is_empty());
+    assert!(f.manager.handle_list_sessions().is_empty());
+}
+
+#[test]
+fn start_session_from_file_loads_every_window() {
+    let mut f = Fixture::new();
+    let path = f.yaml("multi", &[("sleep 300", false), ("sleep 301", true)]);
+
+    f.manager.handle_start_session_from_file(path).unwrap();
+
+    let session = f.session("multi").unwrap();
+    assert_eq!(session.windows_info.len(), 2);
+    assert!(session.sysd_data.is_none(), "imports are ephemeral");
+}
+
+#[test]
+fn start_session_from_bad_file_fails_without_creating_anything() {
+    let mut f = Fixture::new();
+    let missing = f.dir.path().join("missing.yaml");
+    assert!(f.manager.handle_start_session_from_file(missing).is_err());
+
+    let garbage = f.dir.path().join("garbage.yaml");
+    fs::write(&garbage, "name: [").unwrap();
+    assert!(f.manager.handle_start_session_from_file(garbage).is_err());
+
+    assert!(f.manager.handle_list_sessions().is_empty());
+}
+
+#[test]
+fn export_to_file_writes_name_dot_yaml_into_the_directory() {
+    let mut f = Fixture::new();
+    f.manager
+        .handle_create_session("/tmp".into(), Some("sleep 300".into()), Some("exp".into()));
+    let id = f.id("exp");
+    let out = f.dir.path().join("out");
+    fs::create_dir(&out).unwrap();
+
+    let path = eventually("command to be exported", || {
+        let path = f.manager.handle_export_session_to_file(id, out.clone()).unwrap();
+        fs::read_to_string(&path).unwrap().contains("sleep 300").then_some(path)
+    });
+    assert_eq!(path, out.join("exp.yaml"));
+
+    // And it imports again.
+    f.manager.handle_kill_session(id);
+    f.manager.handle_start_session_from_file(path).unwrap();
+    assert!(f.session("exp").is_some());
+}
+
+#[test]
+fn export_of_unknown_session_fails() {
+    let f = Fixture::new();
+    assert!(f
+        .manager
+        .handle_export_session_to_file(SessionId(9), f.dir.path().to_path_buf())
+        .is_err());
+}
+
+// ------------------------------------------------------------------ sysd runs
+
+#[test]
+fn sysd_session_from_file_runs_and_restarts_with_a_new_run() {
+    let mut f = Fixture::new();
+    let path = f.yaml("Svc", &[("sleep 300", true)]);
+
+    let first = f.manager.handle_start_sysd_session_from_file(path.clone()).unwrap();
+    // Stored under the lowercase unit name.
+    let session = f.session("svc").unwrap();
+    assert!(session.sysd_data.unwrap().running);
+    assert_eq!(f.status("svc", first), SysdWaitStatus::Running);
+
+    let second = f.manager.handle_start_sysd_session_from_file(path).unwrap();
+    assert_ne!(first, second);
+    assert_eq!(f.status("svc", first), SysdWaitStatus::Ended);
+    assert_eq!(f.status("svc", second), SysdWaitStatus::Running);
+    assert_eq!(f.manager.handle_list_sessions().len(), 1);
+}
+
+#[test]
+fn stopping_a_sysd_session_ends_its_run() {
+    let mut f = Fixture::new();
+    let run = f
+        .manager
+        .handle_start_sysd_session_from_file(f.yaml("svc", &[("sleep 300", true)]))
+        .unwrap();
+    let id = f.id("svc");
+
+    f.manager.handle_stop_sysd_session(id).unwrap();
+    assert_eq!(f.status("svc", run), SysdWaitStatus::Ended);
+    assert!(!f.session("svc").unwrap().sysd_data.unwrap().running);
+
+    assert!(f.manager.handle_stop_sysd_session(id).is_err());
+}
+
+#[test]
+fn unit_deactivation_ends_the_run() {
+    let mut f = Fixture::new();
+    let run = f
+        .manager
+        .handle_start_sysd_session_from_file(f.yaml("svc", &[("sleep 300", true)]))
+        .unwrap();
+
+    f.manager.handle_unit_deactivated(&UnitName::new("svc").unwrap());
+    assert_eq!(f.status("svc", run), SysdWaitStatus::Ended);
+}
+
+#[test]
+fn tracked_exit_event_is_reported_to_waiters() {
+    let mut f = Fixture::new();
+    let run = f
+        .manager
+        .handle_start_sysd_session_from_file(f.yaml("svc", &[("(exit 4)", true)]))
+        .unwrap();
+    let (_, changes) = f.manager.sysd_wait_status("svc", run);
+
+    let event = eventually("tracked exit", || f.events.try_recv().ok());
+    f.manager.handle_terminal_event(event);
+
+    assert!(changes.has_changed().unwrap(), "waiters were not woken");
+    assert_eq!(f.status("svc", run), SysdWaitStatus::TrackedExited { code: 4 });
+}
+
+#[test]
+fn state_changes_wake_waiters() {
+    let mut f = Fixture::new();
+    f.manager
+        .handle_create_session("/tmp".into(), Some("true".into()), Some("eph".into()));
+    let (_, changes) = f.manager.sysd_wait_status("eph", RunId(1));
+    assert!(!changes.has_changed().unwrap());
+
+    let id = f.id("eph");
+    f.manager.handle_kill_session(id);
+    assert!(changes.has_changed().unwrap());
+}
+
+#[test]
+fn shutdown_is_reported_to_every_waiter() {
+    let mut f = Fixture::new();
+    let run = f
+        .manager
+        .handle_start_sysd_session_from_file(f.yaml("svc", &[("sleep 300", true)]))
+        .unwrap();
+    let (_, changes) = f.manager.sysd_wait_status("svc", run);
+
+    f.manager.begin_shutdown();
+
+    assert!(changes.has_changed().unwrap());
+    assert_eq!(f.status("svc", run), SysdWaitStatus::ShuttingDown);
+    assert_eq!(f.status("unknown", RunId(99)), SysdWaitStatus::ShuttingDown);
+}
+
+// ------------------------------------------------------------------ sysd delete
+
+#[test]
+fn delete_target_rejects_ephemeral_sessions() {
+    let mut f = Fixture::new();
+    f.manager
+        .handle_create_session("/tmp".into(), Some("true".into()), Some("eph".into()));
+    assert!(f.manager.sysd_delete_target("eph").is_err());
+}
+
+#[test]
+fn delete_target_accepts_unknown_names() {
+    let f = Fixture::new();
+    let name = unique("ghost");
+    let (unit, has_unit_file) = f.manager.sysd_delete_target(&name).unwrap();
+    assert_eq!(unit.to_string(), name);
+    assert!(!has_unit_file);
+}
+
+#[test]
+fn deleting_a_session_with_no_files_left_still_removes_it() {
+    let mut f = Fixture::new();
+    let name = unique("svc");
+    f.manager
+        .handle_start_sysd_session_from_file(f.yaml(&name, &[("sleep 300", true)]))
+        .unwrap();
+
+    let removed = f.manager.handle_delete_sysd_session(&UnitName::new(&name).unwrap()).unwrap();
+    assert!(removed.is_empty(), "nothing was stored in the data dir: {removed:?}");
+    assert!(f.session(&name).is_none());
+}
+
+#[test]
+fn deleting_removes_stored_yaml_files() {
+    let mut f = Fixture::new();
+    let name = unique("svc");
+    let stored = f.dir.path().join("data").join(format!("{name}.yaml"));
+    fs::write(&stored, format!("name: {name}\nwindows: []\n")).unwrap();
+
+    let removed = f.manager.handle_delete_sysd_session(&UnitName::new(&name).unwrap()).unwrap();
+    assert_eq!(removed, vec![stored.clone()]);
+    assert!(!stored.exists());
+}
+
+#[test]
+fn deleting_something_that_does_not_exist_fails() {
+    let mut f = Fixture::new();
+    let err = f
+        .manager
+        .handle_delete_sysd_session(&UnitName::new(&unique("ghost")).unwrap())
+        .unwrap_err();
+    assert!(err.to_string().contains("No service named"), "got: {err}");
+}

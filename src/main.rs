@@ -2,13 +2,8 @@ use clap::Parser;
 use color_eyre::Result;
 use std::fs;
 
-pub mod backend;
-pub mod cli;
-pub mod frontend;
-pub mod ipc;
-pub mod logging;
-
-use crate::ipc::consts::socket_path;
+use daemon_test::ipc::consts::socket_path;
+use daemon_test::{backend, cli, frontend, logging};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -23,7 +18,7 @@ async fn main() -> Result<()> {
             // Clean up any stale socket file
             let _ = fs::remove_file(socket_path());
 
-            match crate::backend::deamon::run_daemon().await {
+            match backend::deamon::run_daemon().await {
                 Ok(()) => tracing::info!("Daemon stopped"),
                 Err(e) => tracing::error!("Daemon failed: {e:#}"),
             }
@@ -39,7 +34,7 @@ async fn main() -> Result<()> {
             let _ = logging::LEVEL_FOR_CHILDREN.set(cli.verbose.tracing_level_filter());
 
             cli::ensure_daemon_running().await?;
-            crate::frontend::frontend::run_frontend().await?;
+            frontend::frontend::run_frontend().await?;
         }
     }
 

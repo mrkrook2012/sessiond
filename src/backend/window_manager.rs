@@ -13,7 +13,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, AssignOps, Encode, Decode, Serialize, serde::Deserialize)]
-pub struct WindowId(u64);
+pub struct WindowId(pub u64);
 
 pub struct WindowManager {
     last_id: WindowId,

@@ -215,6 +215,9 @@ impl SessionRuntime {
     }
 
     pub fn stop_sysd_session(&mut self, id: SessionId) -> Result<()> {
+        // Reject ephemeral sessions before tearing anything down.
+        self.sysd_unit(id)?;
+
         if self.session_manager.get_all_windows_from_session(id).is_none() {
             bail!("Found no windows in session");
         }
@@ -452,122 +455,5 @@ impl SessionRuntime {
             .get_all_windows_from_session(id)
             .cloned()
             .unwrap_or_default()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::backend::virtual_terminal::TerminalEvent;
-    use std::time::Instant;
-    use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
-
-    fn runtime() -> (SessionRuntime, UnboundedReceiver<TerminalEvent>) {
-        let (events, receiver) = unbounded_channel();
-        let runtime = SessionRuntime::new(
-            MiniUserManager::new(),
-            TerminalManager::new(events),
-            WindowManager::new(),
-            SessionManager::new(),
-        );
-        (runtime, receiver)
-    }
-
-    fn window(command: &str, tracked: bool) -> YamlWindow {
-        YamlWindow {
-            command: command.to_string(),
-            working_directory: "/tmp".to_string(),
-            tracked,
-        }
-    }
-
-    fn next_event(receiver: &mut UnboundedReceiver<TerminalEvent>) -> TerminalEvent {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            if let Ok(event) = receiver.try_recv() {
-                return event;
-            }
-            assert!(Instant::now() < deadline, "no terminal event within 10s");
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-
-    fn start_sysd(runtime: &mut SessionRuntime, windows: Vec<YamlWindow>) -> RunId {
-        let windows = runtime.spawn_windows(windows, true);
-        runtime
-            .start_or_create_sysd_session(UnitName::new("svc").unwrap(), windows)
-            .unwrap()
-    }
-
-    #[test]
-    fn tracked_command_exit_ends_the_run() {
-        let (mut runtime, mut events) = runtime();
-        let run = start_sysd(&mut runtime, vec![window("sleep 0.2; (exit 3)", true)]);
-
-        assert_eq!(runtime.sysd_wait_status("svc", run), SysdWaitStatus::Running);
-
-        let TerminalEvent::TrackedCommandExited { terminal_id, code } = next_event(&mut events);
-        assert_eq!(code, 3);
-        assert!(runtime.handle_tracked_exit(terminal_id, code));
-
-        assert_eq!(
-            runtime.sysd_wait_status("svc", run),
-            SysdWaitStatus::TrackedExited { code: 3 }
-        );
-    }
-
-    #[test]
-    fn untracked_windows_do_not_report() {
-        let (mut runtime, mut events) = runtime();
-        let run = start_sysd(
-            &mut runtime,
-            vec![window("true", false), window("sleep 0.3", true)],
-        );
-
-        // Only the tracked window's exit arrives.
-        let TerminalEvent::TrackedCommandExited { terminal_id, code } = next_event(&mut events);
-        assert_eq!(code, 0);
-        assert!(runtime.handle_tracked_exit(terminal_id, code));
-        assert_eq!(
-            runtime.sysd_wait_status("svc", run),
-            SysdWaitStatus::TrackedExited { code: 0 }
-        );
-    }
-
-    #[test]
-    fn manual_stop_does_not_end_the_run() {
-        let (mut runtime, mut events) = runtime();
-        let run = start_sysd(&mut runtime, vec![window("sleep 300", true)]);
-
-        let terminal_id = {
-            let id = runtime.session_manager.get_id_by_name("svc").unwrap();
-            let window_id = runtime.windows_of(id)[0];
-            runtime.window_manager.get_terminal_id_from_window_id(&window_id)
-        };
-
-        // Give bash a moment to start `sleep`, then press Ctrl+C like a user would.
-        std::thread::sleep(Duration::from_millis(300));
-        runtime.write(terminal_id, vec![0x03]);
-
-        let TerminalEvent::TrackedCommandExited { terminal_id, code } = next_event(&mut events);
-        assert_eq!(code, 130, "Ctrl+C should end the command with SIGINT");
-        assert!(!runtime.handle_tracked_exit(terminal_id, code));
-
-        assert_eq!(runtime.sysd_wait_status("svc", run), SysdWaitStatus::Running);
-    }
-
-    #[test]
-    fn restarting_gives_a_new_run_and_ends_the_old_one() {
-        let (mut runtime, _events) = runtime();
-        let first = start_sysd(&mut runtime, vec![window("sleep 300", true)]);
-
-        let id = runtime.session_manager.get_id_by_name("svc").unwrap();
-        runtime.stop_sysd_session(id).unwrap();
-        assert_eq!(runtime.sysd_wait_status("svc", first), SysdWaitStatus::Ended);
-
-        let second = start_sysd(&mut runtime, vec![window("sleep 300", true)]);
-        assert_ne!(first, second);
-        assert_eq!(runtime.sysd_wait_status("svc", first), SysdWaitStatus::Ended);
-        assert_eq!(runtime.sysd_wait_status("svc", second), SysdWaitStatus::Running);
     }
 }

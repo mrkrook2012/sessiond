@@ -19,6 +19,11 @@ impl YamlManager {
             None => PathBuf::from(std::env::var("HOME")?).join(".local/share/daemon_test"),
         };
 
+        Self::with_dir(storage_dir)
+    }
+
+    /// Stores session files in `storage_dir`, creating it if needed.
+    pub fn with_dir(storage_dir: PathBuf) -> Result<Self> {
         fs::create_dir_all(&storage_dir)?;
 
         Ok(Self { storage_dir })

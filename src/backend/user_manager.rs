@@ -5,7 +5,7 @@ use mk_utils::AssignOps;
 use crate::backend::terminal_manager::TerminalId;
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, AssignOps)]
-pub struct UserId(u64);
+pub struct UserId(pub u64);
 
 #[derive(Debug)]
 pub enum UserManagerError {
@@ -89,9 +89,12 @@ impl UserManager {
             return Err(UserManagerError::UserNotFound(user_id));
         }
 
-        let terminals = self.visible_terminals.get_mut(&user_id).unwrap();
+        let terminals = self.visible_terminals.get_mut(&user_id);
 
-        let Some(index) = terminals.iter().position(|&id| id == terminal_id) else {
+        let Some((terminals, index)) = terminals.and_then(|terminals| {
+            let index = terminals.iter().position(|&id| id == terminal_id)?;
+            Some((terminals, index))
+        }) else {
             return Err(UserManagerError::TerminalNotVisible(terminal_id));
         };
 

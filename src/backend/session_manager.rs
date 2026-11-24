@@ -232,8 +232,10 @@ impl SessionManager {
     }
 
     pub fn kill_session(&mut self, id: SessionId) {
-        self.free_ids.push(Reverse(id));
-        self.sessions.remove(&id);
+        // Only free ids that were in use, or the same id would be handed out twice.
+        if self.sessions.remove(&id).is_some() {
+            self.free_ids.push(Reverse(id));
+        }
     }
 
     fn generate_id(&mut self) -> SessionId {

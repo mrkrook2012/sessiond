@@ -13,14 +13,7 @@ use crate::ipc::protocol::*;
 // If a second person inspects the same session, we will not resize and their frontend will adapt
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, AssignOps, Encode, Decode, Serialize, serde::Deserialize)]
-pub struct TerminalId(u64);
-
-impl TerminalId {
-    #[cfg(test)]
-    pub fn test(id: u64) -> Self {
-        TerminalId(id)
-    }
-}
+pub struct TerminalId(pub u64);
 
 pub struct TerminalManager {
     last_id: TerminalId,

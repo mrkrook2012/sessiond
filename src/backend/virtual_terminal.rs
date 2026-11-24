@@ -13,7 +13,7 @@ const SCROLLBACK: usize = 20;
 /// How long to wait for the shell to draw its first prompt.
 const SHELL_STARTUP_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long the shell gets to exit after SIGHUP/SIGTERM before it is SIGKILLed.
-const TERMINATE_GRACE: Duration = Duration::from_millis(500);
+pub const TERMINATE_GRACE: Duration = Duration::from_millis(500);
 
 /// Injected into every shell. Reports the running command and directory through
 /// OSC 133 sequences, and the exit code of a *tracked* command through `133;T`.
@@ -350,51 +350,6 @@ fn signal_groups(groups: &[libc::pid_t], signal: libc::c_int) {
             if error.raw_os_error() != Some(libc::ESRCH) {
                 warn!("Failed to signal process group {pgid}: {error}");
             }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::process::Command;
-
-    fn process_running(pattern: &str) -> bool {
-        Command::new("pgrep")
-            .args(["-f", pattern])
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false)
-    }
-
-    /// Regression: the shell used to survive while a command ran in the foreground,
-    /// because only the foreground group was signalled. Waiting on it then hung.
-    #[test]
-    fn dropping_a_terminal_kills_the_shell_and_its_command() {
-        let (events, _receiver) = tokio::sync::mpsc::unbounded_channel();
-        let mut terminal = VirtualTerminal::new(TerminalId::test(1), 24, 80, events);
-
-        // Odd duration so pgrep cannot match anything else on the machine.
-        let marker = format!("sleep 31{}", std::process::id());
-        terminal.execute_command(marker.clone());
-
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !process_running(&marker) {
-            assert!(Instant::now() < deadline, "command never started");
-            std::thread::sleep(Duration::from_millis(20));
-        }
-
-        let started = Instant::now();
-        drop(terminal);
-        assert!(
-            started.elapsed() < Duration::from_millis(100),
-            "drop must not block the daemon"
-        );
-
-        let deadline = Instant::now() + TERMINATE_GRACE + Duration::from_secs(2);
-        while process_running(&marker) {
-            assert!(Instant::now() < deadline, "command survived terminal drop");
-            std::thread::sleep(Duration::from_millis(20));
         }
     }
 }

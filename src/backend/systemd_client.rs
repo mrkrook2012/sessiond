@@ -227,7 +227,7 @@ async fn handle_properties_changed(message: zbus::Message, manager: &Arc<Mutex<D
 
 /// Maps `/org/freedesktop/systemd1/unit/foo_2eservice` back to the unit `foo`.
 /// Returns `None` for anything that is not a `.service` unit.
-fn unit_from_object_path(path: &str) -> Option<UnitName> {
+pub fn unit_from_object_path(path: &str) -> Option<UnitName> {
     let label = path.strip_prefix(UNIT_PATH_PREFIX)?;
     let name = unescape_bus_label(label)?;
     let name = name.strip_suffix(".service")?;
@@ -235,7 +235,7 @@ fn unit_from_object_path(path: &str) -> Option<UnitName> {
 }
 
 /// Reverses systemd's `bus_label_escape`: every byte outside `[A-Za-z0-9]` is written as `_xx`.
-fn unescape_bus_label(label: &str) -> Option<String> {
+pub fn unescape_bus_label(label: &str) -> Option<String> {
     let bytes = label.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -252,24 +252,4 @@ fn unescape_bus_label(label: &str) -> Option<String> {
     }
 
     String::from_utf8(out).ok()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unescapes_unit_paths() {
-        let unit = unit_from_object_path("/org/freedesktop/systemd1/unit/my_2dsession_2eservice");
-        assert_eq!(unit, Some(UnitName::new("my-session").unwrap()));
-    }
-
-    #[test]
-    fn ignores_non_service_units() {
-        assert_eq!(
-            unit_from_object_path("/org/freedesktop/systemd1/unit/default_2etarget"),
-            None
-        );
-        assert_eq!(unit_from_object_path("/org/freedesktop/systemd1/job/12"), None);
-    }
 }
