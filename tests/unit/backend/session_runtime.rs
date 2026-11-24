@@ -147,7 +147,7 @@ fn screen_size_updates_reach_existing_terminals() {
     runtime.write(terminal, b"echo size_$(stty size | tr ' ' x)\r".to_vec());
 
     eventually("resized terminal", || {
-        let data = runtime.get_terminal_data(terminal).data;
+        let data = runtime.get_terminal_data(terminal, 0, 0).data;
         screen_text(&data, 30, 70).contains("size_30x70").then_some(())
     });
 }

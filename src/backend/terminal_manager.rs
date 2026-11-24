@@ -33,19 +33,29 @@ impl TerminalManager {
 
     pub fn get_all_data(&mut self) -> Vec<TerminalUpdate> {
         self.terminals
-            .iter()
-            .map(|(id, terminal)| TerminalUpdate {
-                terminal_id: *id,
-                data: terminal.get_screen(),
-            })
+            .keys()
+            .map(|&id| self.get_data_from_terminal(id))
             .collect()
     }
 
+    /// The live screen of a terminal.
     pub fn get_data_from_terminal(&self, terminal_id: TerminalId) -> TerminalUpdate {
-        let term = self.get_terminal_from_id(terminal_id);
+        self.snapshot(terminal_id, 0, 0)
+    }
+
+    /// The screen scrolled `scrollback` lines back, or no data if unchanged since `since`.
+    pub fn snapshot(&self, terminal_id: TerminalId, scrollback: u32, since: u64) -> TerminalUpdate {
+        let snapshot = self
+            .get_terminal_from_id(terminal_id)
+            .snapshot(scrollback as usize, since);
         TerminalUpdate {
-            terminal_id: terminal_id,
-            data: term.get_screen(),
+            terminal_id,
+            data: snapshot.data,
+            rows: snapshot.rows,
+            cols: snapshot.cols,
+            scrollback: snapshot.scrollback.try_into().unwrap_or(u32::MAX),
+            alternate_screen: snapshot.alternate_screen,
+            generation: snapshot.generation,
         }
     }
 

@@ -15,7 +15,7 @@ ratatui = "0.30.2"
 serde = {version = "1.0.229", features = ["derive"]}
 serde_yaml = "0.9.34"
 tokio = {version = "1.53.1", features=["full"]}
-vt100 = "0.16.2"
+vt100 = "0.18.1"
 zbus_systemd = { version = "0.26100", features = ["systemd1", "zbus-async-tokio"] }
 tarpc = { version = "0.38", features = [
     "tokio1",

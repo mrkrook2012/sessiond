@@ -207,5 +207,19 @@ impl SessionInfo {
 #[derive(Decode, Encode, Debug, Clone, Serialize, serde::Deserialize)]
 pub struct TerminalUpdate {
     pub terminal_id: TerminalId,
+    /// Escape codes that draw the whole screen (and set its input modes, like application
+    /// cursor keys) from scratch, at `rows` x `cols`. Empty if the screen has not changed
+    /// since the generation the client asked with.
     pub data: Vec<u8>,
+    pub rows: u16,
+    pub cols: u16,
+    /// How many lines back from the bottom the screen is scrolled, clamped to the history
+    /// there is. 0 is the live screen.
+    pub scrollback: u32,
+    /// True while a full-screen program (btop, vim, less) has the alternate screen, which
+    /// has no history to scroll through. Not part of `data`: redrawing the contents does
+    /// not switch screens.
+    pub alternate_screen: bool,
+    /// Bumped whenever the screen changes. Send it back as `since` to skip unchanged screens.
+    pub generation: u64,
 }

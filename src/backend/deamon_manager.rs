@@ -73,8 +73,8 @@ impl DaemonManager {
 
     // ------------------------------------------------ pure runtime delegation
 
-    pub fn get_wanted_data(&mut self, terminal_id: TerminalId) -> TerminalUpdate {
-        self.runtime.get_terminal_data(terminal_id)
+    pub fn get_wanted_data(&self, terminal_id: TerminalId, scrollback: u32, since: u64) -> TerminalUpdate {
+        self.runtime.get_terminal_data(terminal_id, scrollback, since)
     }
 
     pub fn handle_write(&mut self, terminal_id: TerminalId, data: Vec<u8>) {

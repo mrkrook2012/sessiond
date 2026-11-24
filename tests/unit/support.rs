@@ -22,7 +22,8 @@ pub fn eventually<T>(what: &str, probe: impl FnMut() -> Option<T>) -> T {
 
 /// The text on a terminal screen, from the formatted state the daemon sends to clients.
 pub fn screen_text(formatted: &[u8], rows: u16, cols: u16) -> String {
-    let mut parser = vt100::Parser::new(rows, cols, 0);
+    let size = |n: u16| std::num::NonZeroU16::new(n).expect("screen size must be non-zero");
+    let mut parser = vt100::Parser::new(size(rows), size(cols), 0);
     parser.process(formatted);
     parser.screen().contents()
 }

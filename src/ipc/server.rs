@@ -60,9 +60,17 @@ impl DaemonRpcServer {
 // Starting/stopping a unit runs its ExecStart/ExecStop, which call back into this daemon.
 
 impl DaemonService for DaemonRpcServer {
-    async fn get_wanted_data(self, _: context::Context, terminal_id: TerminalId) -> TerminalUpdate {
-        let mut manager = self.manager.lock().await;
-        manager.get_wanted_data(terminal_id)
+    async fn get_wanted_data(
+        self,
+        _: context::Context,
+        terminal_id: TerminalId,
+        scrollback: u32,
+        since: u64,
+    ) -> TerminalUpdate {
+        self.manager
+            .lock()
+            .await
+            .get_wanted_data(terminal_id, scrollback, since)
     }
 
     async fn start(self, _: context::Context, rows: u16, cols: u16) {

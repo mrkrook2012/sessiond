@@ -51,9 +51,20 @@ impl DaemonClient {
 
     // Terminal operations
 
-    pub async fn get_wanted_data(&self, terminal_id: TerminalId) -> Result<TerminalUpdate> {
-        self.rpc_call(self.client.get_wanted_data(context::current(), terminal_id))
-            .await
+    /// See `DaemonService::get_wanted_data`.
+    pub async fn get_wanted_data(
+        &self,
+        terminal_id: TerminalId,
+        scrollback: u32,
+        since: u64,
+    ) -> Result<TerminalUpdate> {
+        self.rpc_call(self.client.get_wanted_data(
+            context::current(),
+            terminal_id,
+            scrollback,
+            since,
+        ))
+        .await
     }
 
     pub async fn start(&self, rows: u16, cols: u16) -> Result<()> {

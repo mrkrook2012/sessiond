@@ -7,8 +7,9 @@ use crate::ipc::protocol::{SessionInfo, SessionLookup, SysdAction, SysdWaitStatu
 
 #[tarpc::service]
 pub trait DaemonService {
-    /// Retrieve the currently selected terminal data.
-    async fn get_wanted_data(terminal_id: TerminalId) -> TerminalUpdate;
+    /// A terminal's screen, scrolled `scrollback` lines back into its history (0 = live).
+    /// `data` is empty if the screen has not changed since generation `since` (0 = always send).
+    async fn get_wanted_data(terminal_id: TerminalId, scrollback: u32, since: u64) -> TerminalUpdate;
 
     /// Initialize the daemon connection.
     async fn start(rows: u16, cols: u16);

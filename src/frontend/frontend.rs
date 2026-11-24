@@ -8,7 +8,10 @@ use color_eyre::eyre::Result;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::cursor::Show;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use ratatui::crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+    MouseEventKind,
+};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -22,13 +25,14 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use crate::backend::session_manager::SessionId;
 use crate::backend::terminal_manager::TerminalId;
 use crate::backend::window_manager::WindowId;
+use crate::frontend::keys::encode_key;
 use crate::frontend::session_list::{
     action_done, action_in_progress, is_service_key, new_session, reselect, service_action_for_key,
     service_keys, sort_sessions,
 };
 use crate::frontend::slop_terrm_widget::TerminalWidget;
 use crate::ipc::client::DaemonClient;
-use crate::ipc::protocol::{SessionInfo, SysdAction, SysdData, WindowInfo};
+use crate::ipc::protocol::{SessionInfo, SysdAction, SysdData, TerminalUpdate, WindowInfo};
 
 // Fallback size used only if we somehow can't read the real terminal
 // dimensions at startup (e.g. `terminal.size()` fails).
@@ -42,6 +46,8 @@ const POLL_IDLE: Duration = Duration::from_millis(50);
 const POLL_EMPTY_BACKOFF: Duration = Duration::from_millis(10);
 /// How long the poller sleeps after an RPC error.
 const POLL_ERROR_BACKOFF: Duration = Duration::from_millis(250);
+/// Lines one notch of the mouse wheel scrolls.
+const WHEEL_LINES: i64 = 3;
 /// How often the session list is refreshed, so service states changed elsewhere (systemctl,
 /// a tracked command restarting its service, another client) show up on their own.
 const LIST_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
@@ -131,6 +137,9 @@ struct AppState {
     // window, new size). Scrollback is lost when switching away from a
     // window, same trade-off as before.
     terminal_widget: Option<(TerminalId, TerminalWidget)>,
+    /// Lines to scroll the visible terminal back into its history; 0 follows the live
+    /// screen. The daemon clamps it to the history there is (see `update_screen`).
+    scrollback: u32,
     input_mode: InputMode,
     status: String,
     should_quit: bool,
@@ -149,6 +158,7 @@ impl AppState {
             current_session: None,
             current_window_index: 0,
             terminal_widget: None,
+            scrollback: 0,
             input_mode: InputMode::Normal,
             status: String::new(),
             should_quit: false,
@@ -173,10 +183,10 @@ impl AppState {
 
     /// Re-point `terminal_widget` at whatever window is now current (or
     /// clear it if there isn't one), creating a fresh widget if the
-    /// terminal changed or resizing the existing one in place otherwise.
-    /// Call this after anything that can change which window/terminal is
-    /// displayed or how big it should be: a fresh session info, the user
-    /// switching windows, or a resize.
+    /// terminal changed. Call this after anything that can change which
+    /// window/terminal is displayed: a fresh session info, the user
+    /// switching windows, or a resize. The widget takes its size from the
+    /// screens the daemon sends, so a resize needs nothing else here.
     ///
     /// The terminal poller reads `current_terminal_id()` to decide which
     /// terminal to request updates for, so this is also what steers it.
@@ -184,24 +194,58 @@ impl AppState {
         let terminal_id = self.current_window().map(|w| w.terminal_id);
         let (rows, cols) = self.last_sent_size;
         match terminal_id {
-            Some(id) => match &mut self.terminal_widget {
-                Some((current_id, widget)) if *current_id == id => {
-                    widget.resize(rows, cols);
-                }
-                _ => {
-                    self.terminal_widget = Some((id, TerminalWidget::new(rows, cols)));
-                }
-            },
-            None => self.terminal_widget = None,
+            Some(id) if self.current_terminal_id() == Some(id) => {}
+            Some(id) => {
+                self.terminal_widget = Some((id, TerminalWidget::new(rows, cols)));
+                // Another terminal: start at its live screen.
+                self.scrollback = 0;
+            }
+            None => {
+                self.terminal_widget = None;
+                self.scrollback = 0;
+            }
         }
     }
 
-    fn update_screen(&mut self, terminal_id: TerminalId, data: &[u8]) {
-        if let Some((id, widget)) = &mut self.terminal_widget {
-            if *id == terminal_id {
-                widget.update_screen(data);
-            }
+    /// `requested` is the scrollback the update was asked for.
+    fn update_screen(&mut self, update: &TerminalUpdate, requested: u32) {
+        let Some((id, widget)) = &mut self.terminal_widget else {
+            return;
+        };
+        if *id != update.terminal_id {
+            return;
         }
+        widget.update_screen(update);
+        // Scrolled past the top of the history: stay at the top, so scrolling down
+        // responds immediately. Only if the user has not scrolled again meanwhile.
+        if update.scrollback < requested && self.scrollback == requested {
+            self.scrollback = update.scrollback;
+        }
+    }
+
+    /// Scrolls the visible terminal's history by `lines` (positive = back in time).
+    fn scroll_by(&mut self, lines: i64) {
+        self.scrollback = (i64::from(self.scrollback) + lines).clamp(0, i64::from(u32::MAX)) as u32;
+    }
+
+    /// True if the visible terminal has a history to scroll through. Full-screen programs
+    /// (btop, vim, less) are on the alternate screen, which has none.
+    fn can_scroll(&self) -> bool {
+        self.terminal_widget
+            .as_ref()
+            .is_some_and(|(_, widget)| !widget.alternate_screen())
+    }
+
+    /// True if the visible terminal's program asked for application cursor keys.
+    fn application_cursor(&self) -> bool {
+        self.terminal_widget
+            .as_ref()
+            .is_some_and(|(_, widget)| widget.application_cursor())
+    }
+
+    /// The visible terminal's pane height, for page-wise scrolling.
+    fn page(&self) -> i64 {
+        i64::from(self.last_sent_size.0.saturating_sub(1).max(1))
     }
 
     /// Apply an authoritative `SessionInfo` for a session we're viewing
@@ -319,12 +363,19 @@ async fn connect_and_start(rows: u16, cols: u16) -> Result<DaemonClient> {
 
 /// Continuously requests updates for whichever terminal is currently
 /// visible and feeds them into the widget.
+///
+/// Each request carries the generation of the last screen received, so the
+/// daemon only sends the screen again once it changed; unchanged screens come
+/// back empty and the poller backs off briefly.
 async fn run_terminal_poller(client: Arc<DaemonClient>, state: Arc<Mutex<AppState>>) {
+    // What the last screen received was for: (terminal, scrollback) and its generation.
+    let mut shown: Option<(TerminalId, u32)> = None;
+    let mut generation = 0;
     loop {
         // Never hold the lock across an await.
-        let (terminal_id, quit) = {
+        let (terminal_id, scrollback, quit) = {
             let st = state.lock().unwrap();
-            (st.current_terminal_id(), st.should_quit)
+            (st.current_terminal_id(), st.scrollback, st.should_quit)
         };
         if quit {
             break;
@@ -334,14 +385,19 @@ async fn run_terminal_poller(client: Arc<DaemonClient>, state: Arc<Mutex<AppStat
             continue;
         };
 
-        match client.get_wanted_data(terminal_id).await {
+        // Another terminal, or another part of its history: ask for the full screen.
+        let since = if shown == Some((terminal_id, scrollback)) { generation } else { 0 };
+
+        match client.get_wanted_data(terminal_id, scrollback, since).await {
             Ok(update) => {
                 let empty = update.data.is_empty();
+                shown = Some((terminal_id, scrollback));
+                generation = update.generation;
                 {
                     // `update_screen` ignores the data if the visible
                     // terminal changed while the request was in flight.
                     let mut st = state.lock().unwrap();
-                    st.update_screen(update.terminal_id, update.data.as_slice());
+                    st.update_screen(&update, scrollback);
                 }
                 if empty {
                     tokio::time::sleep(POLL_EMPTY_BACKOFF).await;
@@ -540,7 +596,9 @@ pub async fn run_frontend() -> Result<()> {
     log_line(&mut log, "Connected to daemon");
 
     enable_raw_mode()?;
-    execute!(std::io::stdout(), EnterAlternateScreen)?;
+    // Mouse capture delivers wheel events (for scrolling the history) instead of letting
+    // the outer terminal scroll its own buffer.
+    execute!(std::io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
     // EnterAlternateScreen doesn't guarantee the buffer is actually blank
     // (depends on the terminal emulator, and a prior crashed run can leave
     // stale content behind). Force a full clear + redraw so the session
@@ -723,6 +781,24 @@ pub async fn run_frontend() -> Result<()> {
                                         }
                                     }
                                 }
+                                // 1-9: jump directly to the window at that
+                                // position (frontend-only window_nr - just
+                                // the 1-based index into windows_info, not
+                                // known to the server). Behind the prefix, so
+                                // digits typed into the terminal reach it.
+                                KeyCode::Char(c @ '1'..='9') => {
+                                    let idx = c as usize - '1' as usize;
+                                    let window_id = st
+                                        .current_session
+                                        .as_ref()
+                                        .and_then(|s| s.windows_info.get(idx))
+                                        .map(|w| w.window_id);
+                                    if let Some(window_id) = window_id {
+                                        st.current_window_index = idx;
+                                        st.sync_terminal();
+                                        send(Command::ChangeWindow { window_id });
+                                    }
+                                }
                                 // d: detach (leave the session, back to the
                                 // session list)
                                 KeyCode::Char('d') => {
@@ -851,6 +927,10 @@ pub async fn run_frontend() -> Result<()> {
 
                             Screen::Terminal => {
                                 let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                                let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+                                // A full-screen program has no history; it gets these keys.
+                                let can_scroll = st.can_scroll();
+
                                 match key.code {
                                     // tmux-style prefix: the next keypress is a
                                     // command (see the PrefixPending handling
@@ -859,75 +939,60 @@ pub async fn run_frontend() -> Result<()> {
                                         st.input_mode = InputMode::PrefixPending;
                                     }
 
-                                    // Ctrl-c: interrupt (SIGINT via the
-                                    // terminal driver), Ctrl-v: literal-next,
-                                    // Ctrl-r: reverse history search. These
-                                    // need to be forwarded as raw control
-                                    // bytes rather than falling through to
-                                    // the generic KeyCode::Char(c) handler
-                                    // below, since that path doesn't know
-                                    // about the Ctrl modifier.
-                                    KeyCode::Char('c') if ctrl => {
-                                        write_terminal(&st, &cmd_tx, vec![0x03]);
+                                    // Shift + PageUp/PageDown/Up/Down/Home/End:
+                                    // scroll through the history.
+                                    KeyCode::PageUp if shift && can_scroll => {
+                                        let page = st.page();
+                                        st.scroll_by(page);
                                     }
-                                    KeyCode::Char('v') if ctrl => {
-                                        write_terminal(&st, &cmd_tx, vec![0x16]);
+                                    KeyCode::PageDown if shift && can_scroll => {
+                                        let page = st.page();
+                                        st.scroll_by(-page);
                                     }
-                                    KeyCode::Char('r') if ctrl => {
-                                        write_terminal(&st, &cmd_tx, vec![0x12]);
+                                    KeyCode::Up if shift && can_scroll => st.scroll_by(1),
+                                    KeyCode::Down if shift && can_scroll => st.scroll_by(-1),
+                                    KeyCode::Home if shift && can_scroll => {
+                                        // The daemon clamps this to the top of the history.
+                                        st.scrollback = u32::MAX;
                                     }
-                                    // 1-9: jump directly to the window at that
-                                    // position (frontend-only window_nr - just
-                                    // the 1-based index into windows_info, not
-                                    // known to the server).
-                                    KeyCode::Char(c) if c.is_ascii_digit() && !ctrl => {
-                                        if let Some(digit) = c.to_digit(10) {
-                                            if digit > 0 {
-                                                let idx = digit as usize - 1;
-                                                let window_id = st
-                                                    .current_session
-                                                    .as_ref()
-                                                    .and_then(|s| s.windows_info.get(idx))
-                                                    .map(|w| w.window_id);
-                                                if let Some(window_id) = window_id {
-                                                    st.current_window_index = idx;
-                                                    st.sync_terminal();
-                                                    send(Command::ChangeWindow { window_id });
-                                                }
-                                            }
+                                    KeyCode::End if shift && can_scroll => st.scrollback = 0,
+
+                                    // Everything else goes to the program, encoded the way
+                                    // an xterm would (see `keys::encode_key`), and brings
+                                    // the view back to the live screen.
+                                    _ => {
+                                        if let Some(bytes) = encode_key(key, st.application_cursor()) {
+                                            st.scrollback = 0;
+                                            write_terminal(&st, &cmd_tx, bytes);
                                         }
                                     }
-                                    KeyCode::Enter => write_terminal(&st, &cmd_tx, b"\r".to_vec()),
-                                    KeyCode::Backspace => write_terminal(&st, &cmd_tx, vec![0x7f]),
-                                    KeyCode::Left => {
-                                        write_terminal(&st, &cmd_tx, b"\x1b[D".to_vec())
-                                    }
-                                    KeyCode::Right => {
-                                        write_terminal(&st, &cmd_tx, b"\x1b[C".to_vec())
-                                    }
-                                    KeyCode::Up => write_terminal(&st, &cmd_tx, b"\x1b[A".to_vec()),
-                                    KeyCode::Down => {
-                                        write_terminal(&st, &cmd_tx, b"\x1b[B".to_vec())
-                                    }
-                                    // Tab / Shift-Tab: needed for bash's
-                                    // completion (single Tab, or cycling
-                                    // through a completion menu with
-                                    // Shift-Tab). Crossterm reports these as
-                                    // their own KeyCodes rather than
-                                    // Char('\t'), so they need explicit
-                                    // handling or they'd otherwise be
-                                    // silently dropped by the catch-all below.
-                                    KeyCode::Tab => write_terminal(&st, &cmd_tx, vec![0x09]),
-                                    KeyCode::BackTab => {
-                                        write_terminal(&st, &cmd_tx, b"\x1b[Z".to_vec())
-                                    }
-                                    KeyCode::Char(c) => {
-                                        let mut buf = [0u8; 4];
-                                        let bytes = c.encode_utf8(&mut buf).as_bytes().to_vec();
-                                        write_terminal(&st, &cmd_tx, bytes);
-                                    }
-                                    _ => {}
                                 }
+                            }
+                        }
+                    }
+
+                    // The mouse wheel scrolls the visible terminal's history, 3 lines a notch.
+                    // Full-screen programs have none: like most terminals, the wheel then
+                    // sends Up/Down, which scrolls in less, man, vim and btop.
+                    Event::Mouse(mouse) => {
+                        let lines = match mouse.kind {
+                            MouseEventKind::ScrollUp => WHEEL_LINES,
+                            MouseEventKind::ScrollDown => -WHEEL_LINES,
+                            _ => continue,
+                        };
+                        let mut st = state.lock().unwrap();
+                        if st.screen != Screen::Terminal
+                            || !matches!(st.input_mode, InputMode::Normal)
+                        {
+                            continue;
+                        }
+                        if st.can_scroll() {
+                            st.scroll_by(lines);
+                        } else {
+                            let arrow = if lines > 0 { KeyCode::Up } else { KeyCode::Down };
+                            let key = KeyEvent::new(arrow, KeyModifiers::NONE);
+                            if let Some(bytes) = encode_key(key, st.application_cursor()) {
+                                write_terminal(&st, &cmd_tx, bytes.repeat(WHEEL_LINES as usize));
                             }
                         }
                     }
@@ -943,7 +1008,7 @@ pub async fn run_frontend() -> Result<()> {
 
     // Always restore the terminal, even if the UI loop failed or panicked.
     disable_raw_mode()?;
-    execute!(std::io::stdout(), Show, LeaveAlternateScreen)?;
+    execute!(std::io::stdout(), DisableMouseCapture, Show, LeaveAlternateScreen)?;
     ui_result??;
     Ok(())
 }
@@ -1130,6 +1195,16 @@ fn draw_terminal_screen(frame: &mut ratatui::Frame, area: Rect, st: &AppState) {
         let [running, autostart] = service_state_spans(sysd);
         title.extend([Span::raw("[service "), running, Span::raw(", "), autostart, Span::raw("] ")]);
     }
+    let scrolled = st
+        .terminal_widget
+        .as_ref()
+        .map_or(0, |(_, widget)| widget.scrollback());
+    if scrolled > 0 {
+        title.push(Span::styled(
+            format!("[history: {scrolled} lines up, Shift+End to return] "),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
 
     let tabs = Tabs::new(titles)
         .block(
@@ -1185,7 +1260,9 @@ fn draw_terminal_screen(frame: &mut ratatui::Frame, area: Rect, st: &AppState) {
         Span::styled(" x ", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw("kill window  "),
         Span::styled(" d ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw("detach"),
+        Span::raw("detach    "),
+        Span::styled(" wheel / Shift+PgUp/PgDn ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw("scroll history"),
     ]);
 
     let bar = Paragraph::new(keybinds).block(Block::default().borders(Borders::ALL));

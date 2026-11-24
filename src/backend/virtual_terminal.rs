@@ -1,6 +1,8 @@
 use tracing::{debug, error, trace, warn};
 use portable_pty::{Child, MasterPty, PtyPair, PtySize, native_pty_system};
 use std::io::{Read, Write};
+use std::num::NonZeroU16;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
@@ -8,8 +10,28 @@ use vt100::{Callbacks, Parser};
 
 use crate::backend::terminal_manager::TerminalId;
 
-/// Lines of scrollback kept by the parser.
-const SCROLLBACK: usize = 20;
+/// Lines of scrollback kept by the parser, per terminal.
+const SCROLLBACK: usize = 2000;
+/// What the shell is told it runs in: the daemon's parser emulates an xterm, whatever
+/// terminal the daemon itself was started from (or none, under systemd).
+const TERM: &str = "xterm-256color";
+/// Inherited variables that describe the daemon's own terminal rather than this one.
+/// Programs use them to pick terminal-specific features the parser does not support.
+const FOREIGN_TERMINAL_VARS: &[&str] = &[
+    "TERM_PROGRAM",
+    "TERM_PROGRAM_VERSION",
+    "ALACRITTY_WINDOW_ID",
+    "ALACRITTY_SOCKET",
+    "ALACRITTY_LOG",
+    "KITTY_WINDOW_ID",
+    "KITTY_PID",
+    "KITTY_PUBLIC_KEY",
+    "WEZTERM_PANE",
+    "WEZTERM_EXECUTABLE",
+    "VTE_VERSION",
+    "KONSOLE_VERSION",
+    "WT_SESSION",
+];
 /// How long to wait for the shell to draw its first prompt.
 const SHELL_STARTUP_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long the shell gets to exit after SIGHUP/SIGTERM before it is SIGKILLed.
@@ -23,7 +45,20 @@ pub const TERMINATE_GRACE: Duration = Duration::from_millis(500);
 /// per tracked command. Ctrl+C aborts the rest of the line, but the prompt hook still runs.
 ///
 /// `__osc133_launch <n>` reports `133;L;<n>` once the shell gets to it; see `PendingLaunch`.
+///
+/// The `bind`s make the keys the frontend sends for Ctrl/Alt + arrows, Home/End and
+/// Ctrl+Delete edit the command line, whatever the system's inputrc does.
 const SHELL_SETUP: &str = r#"
+bind '"\e[1;5C": forward-word'
+bind '"\e[1;5D": backward-word'
+bind '"\e[1;3C": forward-word'
+bind '"\e[1;3D": backward-word'
+bind '"\e[3;5~": kill-word'
+bind '"\e[3~": delete-char'
+bind '"\e[H": beginning-of-line'
+bind '"\e[F": end-of-line'
+bind '"\eOH": beginning-of-line'
+bind '"\eOF": end-of-line'
 __osc133_command_start() {
     case "$BASH_COMMAND" in
         __osc133_*|printf*|local*|trap*|PROMPT_COMMAND*)
@@ -147,6 +182,8 @@ impl Callbacks for ShellHooks {
 pub struct VirtualTerminal {
     id: TerminalId,
     parser: Arc<Mutex<Parser<ShellHooks>>>,
+    /// Bumped (while holding the parser lock) whenever the screen changes.
+    generation: Arc<AtomicU64>,
     pair: PtyPair,
     /// Taken in `Drop` and handed to a reaper thread.
     child: Option<Box<dyn Child + Send + Sync>>,
@@ -178,9 +215,15 @@ impl VirtualTerminal {
             })
             .expect("failed to open pty");
 
+        let mut command = portable_pty::CommandBuilder::new("/bin/bash");
+        command.env("TERM", TERM);
+        command.env("COLORTERM", "truecolor");
+        for var in FOREIGN_TERMINAL_VARS {
+            command.env_remove(var);
+        }
         let child = pair
             .slave
-            .spawn_command(portable_pty::CommandBuilder::new("/bin/bash"))
+            .spawn_command(command)
             .expect("failed to spawn shell");
 
         let writer = pair.master.take_writer().expect("failed to take pty writer");
@@ -194,20 +237,24 @@ impl VirtualTerminal {
             events,
         };
         let parser = Arc::new(Mutex::new(Parser::new_with_callbacks(
-            global_rows,
-            global_cols,
+            nonzero(global_rows),
+            nonzero(global_cols),
             SCROLLBACK,
             hooks,
         )));
 
+        // Starts at 1, so a client asking with `since: 0` always gets the screen.
+        let generation = Arc::new(AtomicU64::new(1));
         spawn_reader(
             pair.master.try_clone_reader().expect("failed to clone pty reader"),
             Arc::clone(&parser),
+            Arc::clone(&generation),
         );
 
         let mut terminal = Self {
             id,
             parser,
+            generation,
             pair,
             child: Some(child),
             writer,
@@ -297,7 +344,37 @@ impl VirtualTerminal {
     }
 
     pub fn get_screen(&self) -> Vec<u8> {
-        self.parser.lock().unwrap().screen().state_formatted()
+        self.parser.lock().unwrap().screen().state_formatted().into_bytes()
+    }
+
+    /// The screen scrolled `scrollback` lines back into the history (0 = live), unless it
+    /// has not changed since `since`: then `data` is empty. See `TerminalUpdate`.
+    pub fn snapshot(&self, scrollback: usize, since: u64) -> Snapshot {
+        let mut parser = self.parser.lock().unwrap();
+        let generation = self.generation.load(Ordering::Acquire);
+        let screen = parser.screen_mut();
+        let (rows, cols) = screen.size();
+        let alternate_screen = screen.alternate_screen();
+
+        // The view is only moved for this one read, so the parser always processes
+        // output with the live screen in view, and other clients are unaffected.
+        screen.set_scrollback(scrollback);
+        let scrollback = screen.scrollback();
+        let data = if generation == since {
+            Vec::new()
+        } else {
+            screen.state_formatted().into_bytes()
+        };
+        screen.set_scrollback(0);
+
+        Snapshot {
+            data,
+            rows: rows.get(),
+            cols: cols.get(),
+            scrollback,
+            alternate_screen,
+            generation,
+        }
     }
 
     pub fn get_current_command(&self) -> String {
@@ -331,15 +408,21 @@ impl VirtualTerminal {
     }
 
     fn set_size(&mut self, rows: u16, cols: u16) {
-        self.parser
-            .lock()
-            .unwrap()
-            .screen_mut()
-            .set_size(rows, cols);
+        let (rows, cols) = (nonzero(rows), nonzero(cols));
+        {
+            let mut parser = self.parser.lock().unwrap();
+            if parser.screen().size() == (rows, cols) {
+                return;
+            }
+            // Like xterm: shrinking pushes rows from the top into the scrollback (keeping
+            // the newest output and the prompt on screen), growing pulls them back.
+            parser.set_size(rows, cols);
+            self.generation.fetch_add(1, Ordering::Release);
+        }
 
         let result = self.pair.master.resize(PtySize {
-            rows,
-            cols,
+            rows: rows.get(),
+            cols: cols.get(),
             pixel_height: 0,
             pixel_width: 0,
         });
@@ -349,14 +432,37 @@ impl VirtualTerminal {
     }
 }
 
+/// vt100 sizes are non-zero; a 0 (a client reporting a zero-sized pane) becomes 1.
+fn nonzero(n: u16) -> NonZeroU16 {
+    NonZeroU16::new(n).unwrap_or(NonZeroU16::MIN)
+}
+
+/// A terminal's screen as `VirtualTerminal::snapshot` sees it.
+pub struct Snapshot {
+    pub data: Vec<u8>,
+    pub rows: u16,
+    pub cols: u16,
+    pub scrollback: usize,
+    pub alternate_screen: bool,
+    pub generation: u64,
+}
+
 /// Feeds PTY output into the parser until the PTY closes.
-fn spawn_reader(mut reader: Box<dyn Read + Send>, parser: Arc<Mutex<Parser<ShellHooks>>>) {
+fn spawn_reader(
+    mut reader: Box<dyn Read + Send>,
+    parser: Arc<Mutex<Parser<ShellHooks>>>,
+    generation: Arc<AtomicU64>,
+) {
     std::thread::spawn(move || {
         let mut buffer = [0u8; 8192];
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) => break,
-                Ok(n) => parser.lock().unwrap().process(&buffer[..n]),
+                Ok(n) => {
+                    let mut parser = parser.lock().unwrap();
+                    parser.process(&buffer[..n]);
+                    generation.fetch_add(1, Ordering::Release);
+                }
                 // EIO is how Linux reports that the other side of the PTY is gone.
                 Err(_) => break,
             }

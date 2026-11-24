@@ -42,8 +42,8 @@ impl SessionRuntime {
 
     // ---------------------------------------------------------------- terminal io
 
-    pub fn get_terminal_data(&mut self, terminal_id: TerminalId) -> TerminalUpdate {
-        self.terminal_manager.get_data_from_terminal(terminal_id)
+    pub fn get_terminal_data(&self, terminal_id: TerminalId, scrollback: u32, since: u64) -> TerminalUpdate {
+        self.terminal_manager.snapshot(terminal_id, scrollback, since)
     }
 
     pub fn write(&mut self, terminal_id: TerminalId, data: Vec<u8>) {
@@ -53,8 +53,11 @@ impl SessionRuntime {
 
     // ---------------------------------------------------------------- client view
 
+    /// A client connected with a screen of this size. Every terminal is sized to it, so
+    /// what programs draw (and what the client is sent) fits the client's pane.
     pub fn add_user(&mut self, rows: u16, cols: u16) {
         self.user_manager.add_user(rows, cols);
+        self.terminal_manager.resize_all_terminals(rows, cols);
     }
 
     pub fn update_screen_size(&mut self, rows: u16, cols: u16) {
@@ -104,7 +107,8 @@ impl SessionRuntime {
         windows
             .into_iter()
             .map(|window| {
-                let terminal_id = self.terminal_manager.create_terminal(100, 100);
+                let (rows, cols) = self.user_manager.get_dimensions();
+                let terminal_id = self.terminal_manager.create_terminal(rows, cols);
 
                 self.terminal_manager.launch_on_terminal(
                     terminal_id,
