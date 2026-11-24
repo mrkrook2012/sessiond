@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::backend::session_manager::{RunId, SessionId};
 use crate::backend::terminal_manager::TerminalId;
 use crate::backend::window_manager::WindowId;
-use crate::ipc::protocol::{SessionInfo, SysdAction, SysdWaitStatus, TerminalUpdate};
+use crate::ipc::protocol::{SessionInfo, SessionLookup, SysdAction, SysdWaitStatus, TerminalUpdate};
 
 #[tarpc::service]
 pub trait DaemonService {
@@ -45,6 +45,9 @@ pub trait DaemonService {
 
     /// List all sessions.
     async fn list_sessions() -> Vec<SessionInfo>;
+
+    /// Resolve a session name to its id, or suggest similar names if there is no such session.
+    async fn session_id_by_name(name: String) -> SessionLookup;
 
     /// Create a window in a session.
     async fn create_window(id: SessionId) -> SessionInfo;

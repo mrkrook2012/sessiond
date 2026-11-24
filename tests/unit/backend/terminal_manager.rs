@@ -1,4 +1,5 @@
 use daemon_test::backend::terminal_manager::{TerminalId, TerminalManager};
+use daemon_test::backend::guid::Guid;
 use tokio::sync::mpsc::unbounded_channel;
 
 use crate::support::{eventually, screen_text};
@@ -13,14 +14,16 @@ fn text(manager: &TerminalManager, id: TerminalId) -> String {
 }
 
 #[test]
-fn terminal_ids_are_reused_after_kill() {
+fn killed_terminal_ids_are_never_reused() {
     let mut manager = manager();
     let a = manager.create_terminal(24, 80);
     let b = manager.create_terminal(24, 80);
-    assert_eq!((a, b), (TerminalId(1), TerminalId(2)));
+    assert_ne!(a, b);
 
     manager.kill_terminal(a);
-    assert_eq!(manager.create_terminal(24, 80), a);
+    let c = manager.create_terminal(24, 80);
+    assert_ne!(c, a);
+    assert_ne!(c, b);
     assert_eq!(manager.get_all_data().len(), 2);
 }
 
@@ -49,7 +52,7 @@ fn sending_bytes_is_user_input() {
     let mut manager = manager();
     let id = manager.create_terminal(24, 80);
     assert_eq!(manager.last_user_input(id), None);
-    assert_eq!(manager.last_user_input(TerminalId(99)), None);
+    assert_eq!(manager.last_user_input(TerminalId(Guid::from_u128(99))), None);
 
     manager.send_bytes_to_terminal(id, b"echo typed_$((3*3))\r");
     assert!(manager.last_user_input(id).is_some());
@@ -72,5 +75,5 @@ fn resize_all_terminals_resizes_every_pty() {
 #[test]
 #[should_panic(expected = "Terminal with id should exist")]
 fn unknown_terminal_panics() {
-    manager().get_data_from_terminal(TerminalId(42));
+    manager().get_data_from_terminal(TerminalId(Guid::from_u128(42)));
 }

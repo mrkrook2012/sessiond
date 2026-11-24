@@ -2,6 +2,7 @@
 
 use daemon_test::backend::terminal_manager::TerminalId;
 use daemon_test::backend::user_manager::{UserId, UserManager, UserManagerError};
+use daemon_test::backend::guid::Guid;
 
 fn user(n: u64) -> UserId {
     UserId(n)
@@ -40,12 +41,12 @@ fn every_per_user_operation_requires_a_known_user() {
     }
     let mut manager = UserManager::new();
 
-    assert!(missing(manager.add_visible_terminal(user(1), TerminalId(1))));
-    assert!(missing(manager.remove_visible_terminal(user(1), TerminalId(1))));
+    assert!(missing(manager.add_visible_terminal(user(1), TerminalId(Guid::from_u128(1)))));
+    assert!(missing(manager.remove_visible_terminal(user(1), TerminalId(Guid::from_u128(1)))));
     assert!(missing(manager.get_visible_terminals(user(1))));
     assert!(missing(manager.set_screen_size(user(1), 80, 24)));
     assert!(missing(manager.get_screen_size(user(1))));
-    assert!(missing(manager.terminal_visible_to_user(user(1), TerminalId(1))));
+    assert!(missing(manager.terminal_visible_to_user(user(1), TerminalId(Guid::from_u128(1)))));
 }
 
 #[test]
@@ -56,26 +57,26 @@ fn visible_terminals_per_user() {
 
     assert!(manager.get_visible_terminals(user(1)).unwrap().is_empty());
 
-    manager.add_visible_terminal(user(1), TerminalId(10)).unwrap();
-    manager.add_visible_terminal(user(1), TerminalId(11)).unwrap();
+    manager.add_visible_terminal(user(1), TerminalId(Guid::from_u128(10))).unwrap();
+    manager.add_visible_terminal(user(1), TerminalId(Guid::from_u128(11))).unwrap();
     assert!(matches!(
-        manager.add_visible_terminal(user(1), TerminalId(10)),
+        manager.add_visible_terminal(user(1), TerminalId(Guid::from_u128(10))),
         Err(UserManagerError::TerminalAlreadyVisible(_))
     ));
 
     assert_eq!(
         manager.get_visible_terminals(user(1)).unwrap(),
-        &[TerminalId(10), TerminalId(11)]
+        &[TerminalId(Guid::from_u128(10)), TerminalId(Guid::from_u128(11))]
     );
-    assert!(manager.terminal_visible_to_user(user(1), TerminalId(10)).unwrap());
-    assert!(!manager.terminal_visible_to_user(user(2), TerminalId(10)).unwrap());
+    assert!(manager.terminal_visible_to_user(user(1), TerminalId(Guid::from_u128(10))).unwrap());
+    assert!(!manager.terminal_visible_to_user(user(2), TerminalId(Guid::from_u128(10))).unwrap());
 
-    manager.remove_visible_terminal(user(1), TerminalId(10)).unwrap();
+    manager.remove_visible_terminal(user(1), TerminalId(Guid::from_u128(10))).unwrap();
     assert!(matches!(
-        manager.remove_visible_terminal(user(1), TerminalId(10)),
+        manager.remove_visible_terminal(user(1), TerminalId(Guid::from_u128(10))),
         Err(UserManagerError::TerminalNotVisible(_))
     ));
-    assert_eq!(manager.get_visible_terminals(user(1)).unwrap(), &[TerminalId(11)]);
+    assert_eq!(manager.get_visible_terminals(user(1)).unwrap(), &[TerminalId(Guid::from_u128(11))]);
 }
 
 #[test]
@@ -83,7 +84,7 @@ fn removing_a_terminal_from_a_user_without_any_is_an_error() {
     let mut manager = UserManager::new();
     manager.add_user(user(1)).unwrap();
     assert!(matches!(
-        manager.remove_visible_terminal(user(1), TerminalId(1)),
+        manager.remove_visible_terminal(user(1), TerminalId(Guid::from_u128(1))),
         Err(UserManagerError::TerminalNotVisible(_))
     ));
 }
@@ -101,7 +102,7 @@ fn screen_size_is_unset_until_set() {
 fn removing_a_user_forgets_their_state() {
     let mut manager = UserManager::new();
     manager.add_user(user(1)).unwrap();
-    manager.add_visible_terminal(user(1), TerminalId(1)).unwrap();
+    manager.add_visible_terminal(user(1), TerminalId(Guid::from_u128(1))).unwrap();
     manager.set_screen_size(user(1), 80, 24).unwrap();
 
     manager.remove_user(user(1)).unwrap();
@@ -116,8 +117,8 @@ fn clear_terminals_clears_every_user() {
     let mut manager = UserManager::new();
     manager.add_user(user(1)).unwrap();
     manager.add_user(user(2)).unwrap();
-    manager.add_visible_terminal(user(1), TerminalId(1)).unwrap();
-    manager.add_visible_terminal(user(2), TerminalId(2)).unwrap();
+    manager.add_visible_terminal(user(1), TerminalId(Guid::from_u128(1))).unwrap();
+    manager.add_visible_terminal(user(2), TerminalId(Guid::from_u128(2))).unwrap();
 
     manager.clear_terminals();
 

@@ -1,19 +1,17 @@
 use bincode_next::{Decode, Encode};
 use serde::Serialize;
-use std::{
-    cmp::Reverse,
-    collections::{BinaryHeap, HashMap},
-};
+use std::collections::HashMap;
 
 use color_eyre::eyre::{Ok, OptionExt, Result, bail, eyre};
-use mk_utils::AssignOps;
 
 use crate::{
     backend::{
+        guid::{Guid, GuidManager},
         window_manager::WindowId,
         yaml::{self, models::YamlSession},
     },
-    ipc::protocol::SysdData,
+    backend::name_match::similar_names,
+    ipc::protocol::{SessionLookup, SysdData},
 };
 
 #[derive(
@@ -25,28 +23,23 @@ use crate::{
     PartialEq,
     Ord,
     PartialOrd,
-    AssignOps,
     Encode,
     Decode,
     Serialize,
     serde::Deserialize,
 )]
-pub struct SessionId(pub u64);
+pub struct SessionId(pub Guid);
 
 pub struct SessionManager {
-    last_id: SessionId,
-    /// Source of `RunId`s; every start of a sysd session gets a fresh one.
-    last_run: u64,
-    free_ids: BinaryHeap<Reverse<SessionId>>,
+    /// Source of both `SessionId`s and `RunId`s; every start of a sysd session gets a fresh run.
+    guids: GuidManager,
     sessions: HashMap<SessionId, Session>,
 }
 
 impl SessionManager {
     pub fn new() -> Self {
         Self {
-            last_id: SessionId(0),
-            last_run: 0,
-            free_ids: BinaryHeap::new(),
+            guids: GuidManager::new(),
             sessions: HashMap::new(),
         }
     }
@@ -156,6 +149,34 @@ impl SessionManager {
         self.sessions.values().any(|session| session.name == name)
     }
 
+    /// Resolves a name the user typed. An exact match wins; otherwise a match that only
+    /// differs in case is accepted if it is the only one. Anything else returns the
+    /// sessions with similar names, so the user can be told what they probably meant.
+    pub fn lookup_by_name(&self, name: &str) -> SessionLookup {
+        if let Some(session) = self.sessions.values().find(|session| session.name == name) {
+            return SessionLookup::Found {
+                id: session.id,
+                name: session.name.clone(),
+            };
+        }
+
+        let mut same_ignoring_case = self
+            .sessions
+            .values()
+            .filter(|session| session.name.eq_ignore_ascii_case(name));
+        if let (Some(session), None) = (same_ignoring_case.next(), same_ignoring_case.next()) {
+            return SessionLookup::Found {
+                id: session.id,
+                name: session.name.clone(),
+            };
+        }
+
+        let names = self.sessions.values().map(|session| session.name.as_str());
+        SessionLookup::NotFound {
+            similar: similar_names(name, names).into_iter().map(str::to_owned).collect(),
+        }
+    }
+
     pub fn get_id_by_name(&self, name: &str) -> Option<SessionId> {
         self.sessions
             .values()
@@ -184,8 +205,7 @@ impl SessionManager {
     }
 
     fn next_run(&mut self) -> RunId {
-        self.last_run += 1;
-        RunId(self.last_run)
+        RunId(self.guids.generate())
     }
 
     pub fn stop_sysd_session(&mut self, id: SessionId) -> Result<()> {
@@ -232,19 +252,11 @@ impl SessionManager {
     }
 
     pub fn kill_session(&mut self, id: SessionId) {
-        // Only free ids that were in use, or the same id would be handed out twice.
-        if self.sessions.remove(&id).is_some() {
-            self.free_ids.push(Reverse(id));
-        }
+        self.sessions.remove(&id);
     }
 
     fn generate_id(&mut self) -> SessionId {
-        if let Some(Reverse(id)) = self.free_ids.pop() {
-            id
-        } else {
-            self.last_id += SessionId(1);
-            self.last_id
-        }
+        SessionId(self.guids.generate())
     }
 }
 
@@ -333,7 +345,7 @@ impl SysdSession {
 #[derive(
     Debug, Clone, Copy, Eq, PartialEq, Hash, Encode, Decode, Serialize, serde::Deserialize,
 )]
-pub struct RunId(pub u64);
+pub struct RunId(pub Guid);
 
 pub enum SessionState {
     Running {

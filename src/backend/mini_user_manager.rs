@@ -1,4 +1,4 @@
-use crate::backend::{session_manager::SessionId, terminal_manager::TerminalId};
+use crate::backend::{guid::Guid, session_manager::SessionId, terminal_manager::TerminalId};
 
 pub struct MiniUserManager {
     rows: u16,
@@ -12,7 +12,8 @@ impl MiniUserManager {
         Self {
             rows: 100,
             cols: 100,
-            current_id: SessionId(1),
+            // Placeholder until a session is opened; never a real session.
+            current_id: SessionId(Guid::NIL),
             visible_terminals: Vec::new(),
         }
         

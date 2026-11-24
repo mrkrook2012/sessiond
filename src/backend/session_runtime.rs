@@ -8,7 +8,7 @@ use crate::backend::terminal_manager::{TerminalId, TerminalManager};
 use crate::backend::window_manager::{WindowId, WindowManager};
 use crate::backend::mini_user_manager::MiniUserManager;
 use crate::backend::yaml::models::{YamlSession, YamlWindow};
-use crate::ipc::protocol::{SessionInfo, SysdWaitStatus, TerminalUpdate};
+use crate::ipc::protocol::{SessionInfo, SessionLookup, SysdWaitStatus, TerminalUpdate};
 use color_eyre::eyre::{OptionExt, Result, bail, eyre};
 
 /// A tracked command that exits within this long after the user typed into its window
@@ -106,18 +106,12 @@ impl SessionRuntime {
             .map(|window| {
                 let terminal_id = self.terminal_manager.create_terminal(100, 100);
 
-                self.terminal_manager.execute_command_on_terminal(
+                self.terminal_manager.launch_on_terminal(
                     terminal_id,
-                    format!("cd {}", window.working_directory),
+                    &window.working_directory,
+                    Some(window.command),
+                    track && window.tracked,
                 );
-
-                if track && window.tracked {
-                    self.terminal_manager
-                        .run_tracked_on_terminal(terminal_id, window.command);
-                } else {
-                    self.terminal_manager
-                        .execute_command_on_terminal(terminal_id, window.command);
-                }
 
                 self.window_manager
                     .create_window_with_tracking(terminal_id, window.tracked)
@@ -138,12 +132,7 @@ impl SessionRuntime {
         let terminal_id = self.terminal_manager.create_terminal(rows, cols);
 
         self.terminal_manager
-            .execute_command_on_terminal(terminal_id, format!("cd {working_dir} && clear"));
-
-        if let Some(command) = command {
-            self.terminal_manager
-                .execute_command_on_terminal(terminal_id, command);
-        }
+            .launch_on_terminal(terminal_id, &working_dir, command, false);
 
         let window_id = self.window_manager.create_window(terminal_id);
         self.session_manager
@@ -224,6 +213,11 @@ impl SessionRuntime {
         self.session_manager.stop_sysd_session(id)
     }
 
+    /// Stops every terminal of every session and waits until their processes are gone.
+    pub fn shutdown(&mut self) {
+        self.terminal_manager.shutdown();
+    }
+
     pub fn kill_session(&mut self, id: SessionId) {
         self.teardown_windows(id);
         self.session_manager.kill_session(id);
@@ -263,6 +257,10 @@ impl SessionRuntime {
             }
             SessionKind::SysdBased(sysd_session) => Ok(sysd_session.unit().clone()),
         }
+    }
+
+    pub fn lookup_by_name(&self, name: &str) -> SessionLookup {
+        self.session_manager.lookup_by_name(name)
     }
 
     pub fn session_id_by_name(&self, name: &str) -> Option<SessionId> {

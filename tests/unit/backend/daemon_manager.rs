@@ -13,6 +13,7 @@ use daemon_test::backend::virtual_terminal::TerminalEvent;
 use daemon_test::backend::window_manager::WindowManager;
 use daemon_test::backend::yaml::yaml_manager::YamlManager;
 use daemon_test::ipc::protocol::{SessionInfo, SysdWaitStatus};
+use daemon_test::backend::guid::Guid;
 use tempfile::TempDir;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
@@ -139,7 +140,7 @@ fn export_of_unknown_session_fails() {
     let f = Fixture::new();
     assert!(f
         .manager
-        .handle_export_session_to_file(SessionId(9), f.dir.path().to_path_buf())
+        .handle_export_session_to_file(SessionId(Guid::from_u128(9)), f.dir.path().to_path_buf())
         .is_err());
 }
 
@@ -212,28 +213,12 @@ fn state_changes_wake_waiters() {
     let mut f = Fixture::new();
     f.manager
         .handle_create_session("/tmp".into(), Some("true".into()), Some("eph".into()));
-    let (_, changes) = f.manager.sysd_wait_status("eph", RunId(1));
+    let (_, changes) = f.manager.sysd_wait_status("eph", RunId(Guid::from_u128(1)));
     assert!(!changes.has_changed().unwrap());
 
     let id = f.id("eph");
     f.manager.handle_kill_session(id);
     assert!(changes.has_changed().unwrap());
-}
-
-#[test]
-fn shutdown_is_reported_to_every_waiter() {
-    let mut f = Fixture::new();
-    let run = f
-        .manager
-        .handle_start_sysd_session_from_file(f.yaml("svc", &[("sleep 300", true)]))
-        .unwrap();
-    let (_, changes) = f.manager.sysd_wait_status("svc", run);
-
-    f.manager.begin_shutdown();
-
-    assert!(changes.has_changed().unwrap());
-    assert_eq!(f.status("svc", run), SysdWaitStatus::ShuttingDown);
-    assert_eq!(f.status("unknown", RunId(99)), SysdWaitStatus::ShuttingDown);
 }
 
 // ------------------------------------------------------------------ sysd delete

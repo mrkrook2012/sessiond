@@ -1,7 +1,7 @@
 use tracing::{debug, error, trace, warn};
 use portable_pty::{Child, MasterPty, PtyPair, PtySize, native_pty_system};
 use std::io::{Read, Write};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
 use vt100::{Callbacks, Parser};
@@ -21,6 +21,8 @@ pub const TERMINATE_GRACE: Duration = Duration::from_millis(500);
 /// A tracked command is typed as `__osc133_track; <command>`. The prompt hook runs
 /// first in PROMPT_COMMAND so it still sees the command's `$?`, and only reports once
 /// per tracked command. Ctrl+C aborts the rest of the line, but the prompt hook still runs.
+///
+/// `__osc133_launch <n>` reports `133;L;<n>` once the shell gets to it; see `PendingLaunch`.
 const SHELL_SETUP: &str = r#"
 __osc133_command_start() {
     case "$BASH_COMMAND" in
@@ -33,6 +35,7 @@ __osc133_command_start() {
     printf '\033]133;C;%s\007' "$BASH_COMMAND"
 }
 __osc133_track() { __osc133_tracking=1; }
+__osc133_launch() { printf '\033]133;L;%s\007' "$1"; }
 __osc133_prompt() {
     local status=$?
     if [ -n "$__osc133_tracking" ]; then
@@ -52,11 +55,53 @@ pub enum TerminalEvent {
     TrackedCommandExited { terminal_id: TerminalId, code: i32 },
 }
 
+/// What the shell is doing, as far as the daemon knows.
+#[derive(Default)]
+struct ShellState {
+    /// The command / directory the shell last reported (`133;C` / `133;P`).
+    reported_command: String,
+    reported_pwd: String,
+    /// A launch the shell has not caught up with yet.
+    launch: Option<PendingLaunch>,
+}
+
+/// A command the daemon typed into the shell that the shell has not started yet.
+///
+/// The shell runs typed input in its own time, so right after a launch its reports still
+/// describe whatever it did before (nothing, the setup's `clear`, the `cd`). Until it
+/// reports starting the launched command, the launch itself is the truth: `command` and
+/// `working_dir` are what the terminal is about to run, and where.
+///
+/// The shell reports `133;L;<id>` right before the launched command line, so the first
+/// `133;C` after it is that command, and from then on the shell's reports are current.
+struct PendingLaunch {
+    id: u64,
+    command: String,
+    working_dir: String,
+    /// The shell reported `133;L;<id>`.
+    reached: bool,
+}
+
+impl ShellState {
+    fn command(&self) -> &str {
+        match &self.launch {
+            Some(launch) => &launch.command,
+            None => &self.reported_command,
+        }
+    }
+
+    fn pwd(&self) -> &str {
+        match &self.launch {
+            Some(launch) => &launch.working_dir,
+            None => &self.reported_pwd,
+        }
+    }
+}
+
 /// vt100 callbacks: picks our OSC 133 sequences out of the output stream.
 struct ShellHooks {
     terminal_id: TerminalId,
-    current_command: Arc<RwLock<String>>,
-    current_pwd: Arc<RwLock<String>>,
+    state: Arc<Mutex<ShellState>>,
     events: UnboundedSender<TerminalEvent>,
 }
 
@@ -68,8 +113,22 @@ impl Callbacks for ShellHooks {
         let value = params.get(2).map(|v| String::from_utf8_lossy(v).into_owned());
 
         match (params.get(1).copied(), value) {
-            (Some(b"C"), Some(command)) => *self.current_command.write().unwrap() = command,
-            (Some(b"P"), Some(pwd)) => *self.current_pwd.write().unwrap() = pwd,
+            (Some(b"C"), Some(command)) => {
+                let mut state = self.state.lock().unwrap();
+                if state.launch.as_ref().is_some_and(|launch| launch.reached) {
+                    // This is the launched command starting: the reports are current now.
+                    state.launch = None;
+                }
+                state.reported_command = command;
+            }
+            (Some(b"P"), Some(pwd)) => self.state.lock().unwrap().reported_pwd = pwd,
+            (Some(b"L"), Some(id)) => {
+                let id: Option<u64> = id.trim().parse().ok();
+                let mut state = self.state.lock().unwrap();
+                if let Some(launch) = state.launch.as_mut().filter(|launch| Some(launch.id) == id) {
+                    launch.reached = true;
+                }
+            }
             (Some(b"T"), Some(code)) => {
                 let code = code.trim().parse().unwrap_or(-1);
                 debug!(terminal = ?self.terminal_id, code, "Tracked command exited");
@@ -96,8 +155,9 @@ pub struct VirtualTerminal {
     height_factor: f32,
     global_rows: u16,
     global_cols: u16,
-    current_command: Arc<RwLock<String>>,
-    current_pwd: Arc<RwLock<String>>,
+    state: Arc<Mutex<ShellState>>,
+    /// Source of `PendingLaunch` ids.
+    launches: u64,
     /// When the user last typed into this terminal. Used to tell a manual stop from a crash.
     last_user_input: Option<Instant>,
 }
@@ -126,13 +186,11 @@ impl VirtualTerminal {
         let writer = pair.master.take_writer().expect("failed to take pty writer");
         debug!(terminal = ?id, shell_pid = ?child.process_id(), "Spawned shell");
 
-        let current_command = Arc::new(RwLock::new(String::new()));
-        let current_pwd = Arc::new(RwLock::new(String::new()));
+        let state = Arc::new(Mutex::new(ShellState::default()));
 
         let hooks = ShellHooks {
             terminal_id: id,
-            current_command: Arc::clone(&current_command),
-            current_pwd: Arc::clone(&current_pwd),
+            state: Arc::clone(&state),
             events,
         };
         let parser = Arc::new(Mutex::new(Parser::new_with_callbacks(
@@ -157,8 +215,8 @@ impl VirtualTerminal {
             height_factor: 1.0,
             global_rows,
             global_cols,
-            current_command,
-            current_pwd,
+            state,
+            launches: 0,
             last_user_input: None,
         };
 
@@ -214,16 +272,40 @@ impl VirtualTerminal {
         self.execute_command(format!("__osc133_track; {command}"));
     }
 
+    /// Changes to `working_dir` and runs `command` there (if any; tracked if `tracked`).
+    ///
+    /// From the moment this returns, `get_current_command` and `get_current_pwd` describe
+    /// the launch, even though the shell may not have read the input yet. See `PendingLaunch`.
+    pub fn launch(&mut self, working_dir: &str, command: Option<String>, tracked: bool) {
+        self.launches += 1;
+        let id = self.launches;
+
+        // Recorded before anything is typed, so nobody can read a state from before the launch.
+        self.state.lock().unwrap().launch = Some(PendingLaunch {
+            id,
+            command: command.clone().unwrap_or_default(),
+            working_dir: working_dir.to_owned(),
+            reached: false,
+        });
+
+        self.execute_command(format!("cd {working_dir} && clear && __osc133_launch {id}"));
+        match command {
+            Some(command) if tracked => self.run_tracked(command),
+            Some(command) => self.execute_command(command),
+            None => {}
+        }
+    }
+
     pub fn get_screen(&self) -> Vec<u8> {
         self.parser.lock().unwrap().screen().state_formatted()
     }
 
     pub fn get_current_command(&self) -> String {
-        self.current_command.read().unwrap().clone()
+        self.state.lock().unwrap().command().to_owned()
     }
 
     pub fn get_current_pwd(&self) -> String {
-        self.current_pwd.read().unwrap().clone()
+        self.state.lock().unwrap().pwd().to_owned()
     }
 
     pub fn get_ratio(&self) -> (f32, f32) {
@@ -282,60 +364,99 @@ fn spawn_reader(mut reader: Box<dyn Read + Send>, parser: Arc<Mutex<Parser<Shell
     });
 }
 
+impl VirtualTerminal {
+    /// Starts stopping the shell; see `Termination`. Returns `None` if that already happened.
+    pub fn begin_termination(&mut self) -> Option<Termination> {
+        let child = self.child.take()?;
+        Some(Termination::start(self.id, child, &*self.pair.master))
+    }
+}
+
 impl Drop for VirtualTerminal {
+    /// Never blocks: the rest of the termination happens on a reaper thread.
     fn drop(&mut self) {
-        if let Some(child) = self.child.take() {
-            terminate(self.id, child, &*self.pair.master);
+        if let Some(termination) = self.begin_termination() {
+            let deadline = Instant::now() + TERMINATE_GRACE;
+            std::thread::spawn(move || finish_all(vec![termination], deadline));
         }
     }
 }
 
-/// Stops the shell and everything running in it, without blocking the caller.
+/// A shell (and whatever runs in it) that has been asked to stop.
 ///
 /// The shell is the session leader of the PTY; a running command lives in its own
-/// (foreground) process group. Both get SIGHUP + SIGTERM now, and a reaper thread
-/// SIGKILLs whatever is left after a grace period and then reaps the shell, so no
-/// zombies are left behind and the daemon never waits on a slow process.
-fn terminate(id: TerminalId, mut child: Box<dyn Child + Send + Sync>, master: &dyn MasterPty) {
-    let mut groups: Vec<libc::pid_t> = Vec::new();
+/// (foreground) process group. `start` sends both SIGHUP + SIGTERM. Whatever is left
+/// once the shell exits, or once the grace period ends, gets SIGKILL, and the shell is
+/// reaped so no zombies are left behind.
+pub struct Termination {
+    id: TerminalId,
+    child: Box<dyn Child + Send + Sync>,
+    groups: Vec<libc::pid_t>,
+}
 
-    // Note: `master.process_group_leader()` returns the *foreground* group, which is
-    // the running command rather than the shell. The shell is the child itself.
-    if let Some(shell) = child.process_id().map(|pid| pid as libc::pid_t) {
-        groups.push(shell);
+impl Termination {
+    fn start(id: TerminalId, child: Box<dyn Child + Send + Sync>, master: &dyn MasterPty) -> Self {
+        let mut groups: Vec<libc::pid_t> = Vec::new();
 
-        if let Some(foreground) = master.process_group_leader() {
-            // Only touch groups that belong to this terminal's session.
-            if foreground != shell && unsafe { libc::getsid(foreground) == libc::getsid(shell) } {
-                groups.push(foreground);
+        // Note: `master.process_group_leader()` returns the *foreground* group, which is
+        // the running command rather than the shell. The shell is the child itself.
+        if let Some(shell) = child.process_id().map(|pid| pid as libc::pid_t) {
+            groups.push(shell);
+
+            if let Some(foreground) = master.process_group_leader() {
+                // Only touch groups that belong to this terminal's session.
+                if foreground != shell && unsafe { libc::getsid(foreground) == libc::getsid(shell) } {
+                    groups.push(foreground);
+                }
             }
+        }
+
+        debug!(terminal = ?id, ?groups, "Terminating shell");
+
+        // An interactive bash ignores SIGTERM but exits on SIGHUP (and forwards it to its jobs).
+        signal_groups(&groups, libc::SIGHUP);
+        signal_groups(&groups, libc::SIGTERM);
+
+        Self { id, child, groups }
+    }
+
+    /// If the shell has exited, SIGKILLs what is left of its command and returns true.
+    fn try_finish(&mut self) -> bool {
+        match self.child.try_wait() {
+            Ok(Some(status)) => {
+                trace!(terminal = ?self.id, ?status, "Shell exited");
+                // The shell is gone; make sure its command is too.
+                signal_groups(&self.groups, libc::SIGKILL);
+                true
+            }
+            _ => false,
         }
     }
 
-    debug!(terminal = ?id, ?groups, "Terminating shell");
-
-    // An interactive bash ignores SIGTERM but exits on SIGHUP (and forwards it to its jobs).
-    signal_groups(&groups, libc::SIGHUP);
-    signal_groups(&groups, libc::SIGTERM);
-
-    std::thread::spawn(move || {
-        let deadline = Instant::now() + TERMINATE_GRACE;
-        while Instant::now() < deadline {
-            if let Ok(Some(status)) = child.try_wait() {
-                trace!(terminal = ?id, ?status, "Shell exited");
-                // The shell is gone; make sure its command is too.
-                signal_groups(&groups, libc::SIGKILL);
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(20));
+    /// SIGKILLs everything that is left and reaps the shell. Blocks until it is gone.
+    fn kill(mut self) {
+        debug!(terminal = ?self.id, "Shell did not exit in time, sending SIGKILL");
+        signal_groups(&self.groups, libc::SIGKILL);
+        if let Err(e) = self.child.wait() {
+            error!(terminal = ?self.id, "Failed to reap shell: {e}");
         }
+    }
+}
 
-        debug!(terminal = ?id, "Shell did not exit in time, sending SIGKILL");
-        signal_groups(&groups, libc::SIGKILL);
-        if let Err(e) = child.wait() {
-            error!(terminal = ?id, "Failed to reap shell: {e}");
+/// Waits until every shell has exited or `deadline` passes, then kills what is left.
+/// Blocks until all of them are reaped.
+pub fn finish_all(mut terminations: Vec<Termination>, deadline: Instant) {
+    loop {
+        terminations.retain_mut(|termination| !termination.try_finish());
+        if terminations.is_empty() || Instant::now() >= deadline {
+            break;
         }
-    });
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    for termination in terminations {
+        termination.kill();
+    }
 }
 
 fn signal_groups(groups: &[libc::pid_t], signal: libc::c_int) {

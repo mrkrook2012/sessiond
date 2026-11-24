@@ -8,6 +8,7 @@ use daemon_test::backend::virtual_terminal::TerminalEvent;
 use daemon_test::backend::window_manager::WindowManager;
 use daemon_test::backend::yaml::models::YamlWindow;
 use daemon_test::ipc::protocol::{SessionInfo, SysdWaitStatus};
+use daemon_test::backend::guid::Guid;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use crate::support::{eventually, screen_text};
@@ -103,7 +104,7 @@ fn windows_can_be_added_and_the_last_kill_ends_the_session() {
 #[test]
 fn create_window_on_unknown_session_fails() {
     let (mut runtime, _events) = runtime();
-    assert!(runtime.create_window(SessionId(5)).is_err());
+    assert!(runtime.create_window(SessionId(Guid::from_u128(5))).is_err());
 }
 
 #[test]
@@ -133,7 +134,7 @@ fn open_session_without_windows_fails() {
     let (mut runtime, _events) = runtime();
     runtime.add_stopped_sysd_session(UnitName::new("svc").unwrap(), false);
     assert!(runtime.open_session(id_of(&runtime, "svc")).is_err());
-    assert!(runtime.open_session(SessionId(99)).is_err());
+    assert!(runtime.open_session(SessionId(Guid::from_u128(99))).is_err());
 }
 
 #[test]
@@ -173,7 +174,7 @@ fn to_yaml_of_a_stopped_or_unknown_session_fails() {
     let (mut runtime, _events) = runtime();
     runtime.add_stopped_sysd_session(UnitName::new("svc").unwrap(), false);
     assert!(runtime.to_yaml(id_of(&runtime, "svc")).is_err());
-    assert!(runtime.to_yaml(SessionId(99)).is_err());
+    assert!(runtime.to_yaml(SessionId(Guid::from_u128(99))).is_err());
 }
 
 #[test]
@@ -206,7 +207,7 @@ fn sysd_unit_only_exists_for_sysd_sessions() {
     runtime.add_stopped_sysd_session(UnitName::new("Svc").unwrap(), false);
 
     assert!(runtime.sysd_unit(eph).is_err());
-    assert!(runtime.sysd_unit(SessionId(99)).is_err());
+    assert!(runtime.sysd_unit(SessionId(Guid::from_u128(99))).is_err());
     assert_eq!(runtime.sysd_unit(id_of(&runtime, "svc")).unwrap().to_string(), "svc");
     assert_eq!(runtime.sysd_units().len(), 1);
 }
@@ -304,8 +305,8 @@ fn restarting_gives_a_new_run_and_ends_the_old_one() {
 fn wait_status_of_unknown_or_ephemeral_session_is_ended() {
     let (mut runtime, _events) = runtime();
     ephemeral(&mut runtime, "eph", "true");
-    assert_eq!(runtime.sysd_wait_status("nope", RunId(1)), SysdWaitStatus::Ended);
-    assert_eq!(runtime.sysd_wait_status("eph", RunId(1)), SysdWaitStatus::Ended);
+    assert_eq!(runtime.sysd_wait_status("nope", RunId(Guid::from_u128(1))), SysdWaitStatus::Ended);
+    assert_eq!(runtime.sysd_wait_status("eph", RunId(Guid::from_u128(1))), SysdWaitStatus::Ended);
 }
 
 // ------------------------------------------------------------------ tracked commands
@@ -371,7 +372,7 @@ fn tracked_exit_is_ignored_for_ephemeral_sessions_and_unknown_terminals() {
     let terminal = first_terminal(&runtime, "eph");
 
     assert!(!runtime.handle_tracked_exit(terminal, 1));
-    assert!(!runtime.handle_tracked_exit(TerminalId(999), 1));
+    assert!(!runtime.handle_tracked_exit(TerminalId(Guid::from_u128(999)), 1));
 }
 
 #[test]

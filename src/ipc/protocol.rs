@@ -102,6 +102,16 @@ pub enum ClientMessage {
     // Useful for cli
 }
 
+/// Answer to `session_id_by_name`.
+#[derive(Decode, Encode, Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
+pub enum SessionLookup {
+    /// `name` is the session's own name, which may differ in case from what was asked for.
+    Found { id: SessionId, name: String },
+    /// No session has this name. `similar` holds names that look like it, best match first
+    /// (empty if nothing comes close).
+    NotFound { similar: Vec<String> },
+}
+
 /// Answer to `wait_sysd_session`: what happened to one run of a sysd session.
 #[derive(Decode, Encode, Debug, Clone, Copy, PartialEq, Serialize, serde::Deserialize)]
 pub enum SysdWaitStatus {
@@ -111,8 +121,6 @@ pub enum SysdWaitStatus {
     TrackedExited { code: i32 },
     /// The run is over: the session was stopped, killed, deleted or restarted.
     Ended,
-    /// The daemon is shutting down on request.
-    ShuttingDown,
 }
 
 #[derive(Decode, Encode, Debug, Serialize, serde::Deserialize)]

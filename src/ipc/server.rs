@@ -18,7 +18,7 @@ use crate::backend::{
 };
 use crate::ipc::{
     consts::socket_path,
-    protocol::{SessionInfo, SysdAction, SysdWaitStatus, TerminalUpdate},
+    protocol::{SessionInfo, SessionLookup, SysdAction, SysdWaitStatus, TerminalUpdate},
     service::DaemonService,
 };
 
@@ -122,6 +122,10 @@ impl DaemonService for DaemonRpcServer {
         manager.handle_list_sessions()
     }
 
+    async fn session_id_by_name(self, _: context::Context, name: String) -> SessionLookup {
+        self.manager.lock().await.handle_session_id_by_name(&name)
+    }
+
     async fn create_window(self, _: context::Context, id: SessionId) -> SessionInfo {
         let mut manager = self.manager.lock().await;
         manager.handle_create_window(id)
@@ -175,12 +179,7 @@ impl DaemonService for DaemonRpcServer {
     }
 
     async fn kill_daemon(self, _: context::Context) {
-        // Tell waiting `__internal-systemd-start` processes first and give their replies
-        // a moment to go out, so they exit cleanly instead of seeing a dropped connection
-        // (which they treat as a crash, making systemd restart them and the daemon).
-        self.manager.lock().await.begin_shutdown();
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-
+        // Blocks this worker for at most the terminate grace period, then exits the process.
         self.manager.lock().await.handle_kill_deamon()
     }
 
@@ -339,17 +338,16 @@ pub async fn run_server(
             }
         })
         .map(server::BaseChannel::with_defaults)
-        .map(|channel| {
-            let rpc_server = server.clone();
-
-            channel
-                .execute(rpc_server.serve())
-                .for_each(|request| async move {
-                    tokio::spawn(request);
-                })
+        .for_each(|channel| {
+            // Every connection gets its own task: clients like `__internal-systemd-start`
+            // stay connected for as long as their session runs, so a fixed number of
+            // concurrently served connections would lock everyone else out.
+            let requests = channel.execute(server.clone().serve()).for_each(|request| async move {
+                tokio::spawn(request);
+            });
+            tokio::spawn(requests);
+            async {}
         })
-        .buffer_unordered(10)
-        .for_each(|_| async {})
         .await;
 
     Ok(())

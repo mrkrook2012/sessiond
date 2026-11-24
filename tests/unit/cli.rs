@@ -4,7 +4,7 @@ use std::fs;
 
 use clap::{CommandFactory, Parser, error::ErrorKind};
 use daemon_test::cli::{
-    Cli, Commands, DaemonCommands, ServiceCommands, generate_random_name, session_name_from_config,
+    Cli, Commands, DaemonCommands, ServiceCommands, generate_random_name, session_name_from_config, session_not_found_message,
     shell_join, shell_quote,
 };
 use tracing::level_filters::LevelFilter;
@@ -214,4 +214,28 @@ fn session_name_from_config_is_the_lowercased_unit_name() {
     fs::write(&path, "not yaml: [").unwrap();
     assert!(session_name_from_config(&path).is_err());
     assert!(session_name_from_config(&dir.path().join("missing.yaml")).is_err());
+}
+
+// ------------------------------------------------------------------ session not found
+
+#[test]
+fn session_not_found_points_to_list_without_suggestions() {
+    let message = session_not_found_message("zzz", &[]);
+    assert_eq!(message, "Session not found: 'zzz'\nRun `daemon_test list` to see all sessions.");
+}
+
+#[test]
+fn session_not_found_suggests_one_name() {
+    let message = session_not_found_message("websrever", &["webserver".into()]);
+    assert_eq!(message, "Session not found: 'websrever'\nDid you mean 'webserver'?");
+}
+
+#[test]
+fn session_not_found_lists_several_names() {
+    let similar = ["web-proxy".into(), "webserver".into(), "web".into()];
+    let message = session_not_found_message("wb", &similar);
+    assert_eq!(
+        message,
+        "Session not found: 'wb'\nDid you mean 'web-proxy', 'webserver' or 'web'?"
+    );
 }

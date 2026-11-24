@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use crate::backend::session_manager::SessionId;
 use crate::ipc::client::DaemonClient;
 use crate::ipc::consts::socket_path;
-use crate::ipc::protocol::{SessionInfo, SysdAction, SysdWaitStatus};
+use crate::ipc::protocol::{SessionInfo, SessionLookup, SysdAction, SysdWaitStatus};
 
 /// Directory for daemon.out / daemon.err.
 const LOG_DIR_ENV_VAR: &str = "DAEMON_TEST_LOG_DIR";
@@ -220,14 +220,26 @@ async fn list_sessions(rpc: &DaemonClient) -> Result<Vec<SessionInfo>> {
     rpc.list_sessions().await
 }
 
-/// Find a session by name.
-async fn find_session_id(rpc: &DaemonClient, name: &str) -> Result<SessionId> {
-    list_sessions(rpc)
-        .await?
-        .into_iter()
-        .find(|session| session.name == name)
-        .map(|session| session.id)
-        .ok_or_else(|| eyre!("Session not found: {}", name))
+/// Find a session by name. Returns its id and its own name (which may differ in case from
+/// `name`). If there is no such session, the error suggests similar names.
+async fn find_session(rpc: &DaemonClient, name: &str) -> Result<(SessionId, String)> {
+    match rpc.session_id_by_name(name).await? {
+        SessionLookup::Found { id, name } => Ok((id, name)),
+        SessionLookup::NotFound { similar } => Err(eyre!(session_not_found_message(name, &similar))),
+    }
+}
+
+/// `Session not found: 'x'`, followed by a hint: the similar names, or how to list sessions.
+pub fn session_not_found_message(name: &str, similar: &[String]) -> String {
+    let hint = match similar {
+        [] => format!("Run `{} list` to see all sessions.", env!("CARGO_PKG_NAME")),
+        [only] => format!("Did you mean '{only}'?"),
+        [rest @ .., last] => {
+            let rest: Vec<String> = rest.iter().map(|name| format!("'{name}'")).collect();
+            format!("Did you mean {} or '{last}'?", rest.join(", "))
+        }
+    };
+    format!("Session not found: '{name}'\n{hint}")
 }
 
 /// Start the daemon in the background if necessary and wait until it accepts
@@ -314,7 +326,7 @@ async fn handle_run(systemd: bool, name: Option<String>, command: Vec<String>) -
             .await?;
 
         // The daemon starts the unit through systemd; its ExecStart then spawns the windows.
-        let id = find_session_id(&rpc, &name).await?;
+        let (id, _) = find_session(&rpc, &name).await?;
         rpc.execute_sysd_action(id, SysdAction::Start).await?;
     } else {
         rpc.create_session(working_dir, Some(command), Some(name))
@@ -359,7 +371,7 @@ async fn handle_list_sessions(names_only: bool, services_only: bool) -> Result<(
 
 async fn handle_attach_session(name: String) -> Result<()> {
     let rpc = connect().await?;
-    let id = find_session_id(&rpc, &name).await?;
+    let (id, _) = find_session(&rpc, &name).await?;
 
     let session_info = rpc.open_session(id).await?;
 
@@ -373,7 +385,7 @@ async fn handle_attach_session(name: String) -> Result<()> {
 
 async fn handle_kill_session(name: String) -> Result<()> {
     let rpc = connect().await?;
-    let id = find_session_id(&rpc, &name).await?;
+    let (id, name) = find_session(&rpc, &name).await?;
 
     rpc.kill_session(id).await?;
 
@@ -429,7 +441,7 @@ async fn handle_service(action: ServiceCommands) -> Result<()> {
             };
 
             let rpc = connect().await?;
-            let id = find_session_id(&rpc, &name).await?;
+            let (id, name) = find_session(&rpc, &name).await?;
 
             // The daemon rejects this for non-systemd sessions.
             rpc.execute_sysd_action(id, sysd_action).await?;
@@ -465,7 +477,7 @@ async fn handle_export_session(name: String, dir: Option<PathBuf>) -> Result<()>
         None => std::env::current_dir()?,
     };
 
-    let id = find_session_id(&rpc, &name).await?;
+    let (id, name) = find_session(&rpc, &name).await?;
 
     let path = rpc.export_session_to_file(id, export_dir).await?;
 
@@ -611,11 +623,21 @@ async fn handle_internal_systemd_start(file_path: PathBuf) -> Result<()> {
     // Stay alive for as long as the session runs: this process is the unit's main process.
     // Exiting with an error makes systemd (Restart=on-failure) restart the unit.
     loop {
-        // A lost connection means the daemon died: an error, so systemd restarts us.
-        match rpc
+        let status = match rpc
             .wait_sysd_session(yaml_name.clone(), run, Duration::from_secs(30))
-            .await?
+            .await
         {
+            Ok(status) => status,
+            // `daemon stop` removes the socket before exiting; a crash leaves it behind.
+            Err(_) if !socket_path().exists() => {
+                info!("Daemon was stopped, stopping '{yaml_name}'");
+                return Ok(());
+            }
+            // The daemon died: an error, so systemd restarts us (and with us, the daemon).
+            Err(e) => return Err(e),
+        };
+
+        match status {
             SysdWaitStatus::Running => continue,
             SysdWaitStatus::TrackedExited { code } => {
                 return Err(eyre!(
@@ -624,10 +646,6 @@ async fn handle_internal_systemd_start(file_path: PathBuf) -> Result<()> {
             }
             SysdWaitStatus::Ended => {
                 info!("Systemd session '{yaml_name}' ended");
-                return Ok(());
-            }
-            SysdWaitStatus::ShuttingDown => {
-                info!("Daemon is shutting down, stopping '{yaml_name}'");
                 return Ok(());
             }
         }
@@ -651,7 +669,7 @@ async fn handle_internal_systemd_stop(name: String) -> Result<()> {
     }
 
     let rpc = connect().await?;
-    let Ok(id) = find_session_id(&rpc, &name).await else {
+    let Ok((id, name)) = find_session(&rpc, &name).await else {
         info!("No session named '{name}', nothing to stop");
         return Ok(());
     };

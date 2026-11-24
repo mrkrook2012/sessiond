@@ -1,7 +1,9 @@
 pub mod virtual_terminal;
 pub mod deamon;
+pub mod guid;
 pub mod deamon_manager;
 pub mod mini_user_manager;
+pub mod name_match;
 pub mod terminal_manager;
 pub mod user_manager;
 pub mod window;

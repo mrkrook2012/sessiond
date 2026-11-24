@@ -2,6 +2,8 @@ use daemon_test::backend::session_manager::{
     SessionId, SessionKind, SessionManager, SessionState, UnitName,
 };
 use daemon_test::backend::window_manager::WindowId;
+use daemon_test::backend::guid::Guid;
+use daemon_test::ipc::protocol::SessionLookup;
 
 fn unit(name: &str) -> UnitName {
     UnitName::new(name).unwrap()
@@ -25,25 +27,38 @@ fn unit_names_are_lowercased() {
 // ------------------------------------------------------------------ ids
 
 #[test]
-fn ids_start_at_one_and_increase() {
+fn ids_are_unique() {
     let mut manager = SessionManager::new();
     let a = manager.create_ephem_session(vec![], "a".into());
     let b = manager.create_ephem_session(vec![], "b".into());
-    assert_eq!((a, b), (SessionId(1), SessionId(2)));
+    assert_ne!(a, b);
 }
 
 #[test]
-fn freed_ids_are_reused_smallest_first() {
+fn killed_session_ids_are_never_reused() {
     let mut manager = SessionManager::new();
-    for name in ["a", "b", "c"] {
-        manager.create_ephem_session(vec![], name.into());
+    let killed: Vec<SessionId> = ["a", "b", "c"]
+        .into_iter()
+        .map(|name| manager.create_ephem_session(vec![], name.into()))
+        .collect();
+    for &id in &killed {
+        manager.kill_session(id);
     }
-    manager.kill_session(SessionId(3));
-    manager.kill_session(SessionId(1));
 
-    assert_eq!(manager.create_ephem_session(vec![], "d".into()), SessionId(1));
-    assert_eq!(manager.create_ephem_session(vec![], "e".into()), SessionId(3));
-    assert_eq!(manager.create_ephem_session(vec![], "f".into()), SessionId(4));
+    for name in ["d", "e", "f"] {
+        let id = manager.create_ephem_session(vec![], name.into());
+        assert!(!killed.contains(&id), "{id:?} was handed out again");
+    }
+}
+
+#[test]
+fn every_start_gets_a_new_run_id() {
+    let mut manager = SessionManager::new();
+    let first = manager.create_running_sysd_session(unit("svc"), vec![]);
+    let id = manager.get_id_by_name("svc").unwrap();
+    manager.stop_sysd_session(id).unwrap();
+    let second = manager.start_sysd_session(id, vec![]).unwrap();
+    assert_ne!(first, second);
 }
 
 #[test]
@@ -77,12 +92,12 @@ fn lookup_by_name_is_case_insensitive_but_existence_check_is_not() {
 #[test]
 fn session_is_found_by_its_window() {
     let mut manager = SessionManager::new();
-    let a = manager.create_ephem_session(vec![WindowId(1), WindowId(2)], "a".into());
-    let b = manager.create_ephem_session(vec![WindowId(3)], "b".into());
+    let a = manager.create_ephem_session(vec![WindowId(Guid::from_u128(1)), WindowId(Guid::from_u128(2))], "a".into());
+    let b = manager.create_ephem_session(vec![WindowId(Guid::from_u128(3))], "b".into());
 
-    assert_eq!(manager.get_session_id_by_window(WindowId(2)), Some(a));
-    assert_eq!(manager.get_session_id_by_window(WindowId(3)), Some(b));
-    assert_eq!(manager.get_session_id_by_window(WindowId(9)), None);
+    assert_eq!(manager.get_session_id_by_window(WindowId(Guid::from_u128(2))), Some(a));
+    assert_eq!(manager.get_session_id_by_window(WindowId(Guid::from_u128(3))), Some(b));
+    assert_eq!(manager.get_session_id_by_window(WindowId(Guid::from_u128(9))), None);
 }
 
 #[test]
@@ -100,24 +115,24 @@ fn does_session_exist_follows_create_and_kill() {
 #[test]
 fn windows_can_be_added_and_removed() {
     let mut manager = SessionManager::new();
-    let id = manager.create_ephem_session(vec![WindowId(1)], "a".into());
+    let id = manager.create_ephem_session(vec![WindowId(Guid::from_u128(1))], "a".into());
 
-    manager.add_window_to_session(id, WindowId(2)).unwrap();
+    manager.add_window_to_session(id, WindowId(Guid::from_u128(2))).unwrap();
     assert_eq!(
         manager.get_all_windows_from_session(id),
-        Some(&vec![WindowId(1), WindowId(2)])
+        Some(&vec![WindowId(Guid::from_u128(1)), WindowId(Guid::from_u128(2))])
     );
 
-    manager.remove_window_from_session(id, WindowId(1)).unwrap();
-    assert_eq!(manager.get_all_windows_from_session(id), Some(&vec![WindowId(2)]));
+    manager.remove_window_from_session(id, WindowId(Guid::from_u128(1))).unwrap();
+    assert_eq!(manager.get_all_windows_from_session(id), Some(&vec![WindowId(Guid::from_u128(2))]));
 }
 
 #[test]
 fn window_operations_on_unknown_session_fail() {
     let mut manager = SessionManager::new();
-    assert!(manager.add_window_to_session(SessionId(7), WindowId(1)).is_err());
-    assert!(manager.remove_window_from_session(SessionId(7), WindowId(1)).is_err());
-    assert_eq!(manager.get_all_windows_from_session(SessionId(7)), None);
+    assert!(manager.add_window_to_session(SessionId(Guid::from_u128(7)), WindowId(Guid::from_u128(1))).is_err());
+    assert!(manager.remove_window_from_session(SessionId(Guid::from_u128(7)), WindowId(Guid::from_u128(1))).is_err());
+    assert_eq!(manager.get_all_windows_from_session(SessionId(Guid::from_u128(7))), None);
 }
 
 #[test]
@@ -126,7 +141,7 @@ fn stopped_sysd_session_has_no_windows() {
     let id = manager.create_stopped_sysd_session(unit("svc"), false);
 
     assert_eq!(manager.get_all_windows_from_session(id), None);
-    assert!(manager.add_window_to_session(id, WindowId(1)).is_err());
+    assert!(manager.add_window_to_session(id, WindowId(Guid::from_u128(1))).is_err());
 }
 
 // ------------------------------------------------------------------ sysd sessions
@@ -137,9 +152,9 @@ fn sysd_session_start_stop_cycle() {
     let id = manager.create_stopped_sysd_session(unit("svc"), false);
     assert!(!sysd_running(&manager, id));
 
-    let run = manager.start_sysd_session(id, vec![WindowId(1)]).unwrap();
+    let run = manager.start_sysd_session(id, vec![WindowId(Guid::from_u128(1))]).unwrap();
     assert!(sysd_running(&manager, id));
-    assert_eq!(manager.get_all_windows_from_session(id), Some(&vec![WindowId(1)]));
+    assert_eq!(manager.get_all_windows_from_session(id), Some(&vec![WindowId(Guid::from_u128(1))]));
 
     manager.stop_sysd_session(id).unwrap();
     assert!(!sysd_running(&manager, id));
@@ -164,8 +179,8 @@ fn sysd_operations_reject_ephemeral_and_unknown_sessions() {
 
     assert!(manager.start_sysd_session(eph, vec![]).is_err());
     assert!(manager.stop_sysd_session(eph).is_err());
-    assert!(manager.start_sysd_session(SessionId(99), vec![]).is_err());
-    assert!(manager.stop_sysd_session(SessionId(99)).is_err());
+    assert!(manager.start_sysd_session(SessionId(Guid::from_u128(99)), vec![]).is_err());
+    assert!(manager.stop_sysd_session(SessionId(Guid::from_u128(99))).is_err());
 }
 
 #[test]
@@ -227,4 +242,82 @@ fn tracked_exit_is_ignored_while_stopped_and_cleared_by_a_new_run() {
         sysd.state(),
         SessionState::Running { tracked_exit: None, .. }
     ));
+}
+
+// ------------------------------------------------------------------ lookup by name
+
+fn lookup_id(manager: &SessionManager, name: &str) -> Option<SessionId> {
+    match manager.lookup_by_name(name) {
+        SessionLookup::Found { id, .. } => Some(id),
+        SessionLookup::NotFound { .. } => None,
+    }
+}
+
+#[test]
+fn lookup_finds_exact_names() {
+    let mut manager = SessionManager::new();
+    let id = manager.create_ephem_session(vec![], "webserver".into());
+    manager.create_ephem_session(vec![], "web".into());
+
+    assert_eq!(
+        manager.lookup_by_name("webserver"),
+        SessionLookup::Found { id, name: "webserver".into() }
+    );
+}
+
+#[test]
+fn lookup_accepts_a_unique_match_in_another_case() {
+    let mut manager = SessionManager::new();
+    let id = manager.create_ephem_session(vec![], "WebServer".into());
+
+    assert_eq!(
+        manager.lookup_by_name("webserver"),
+        SessionLookup::Found { id, name: "WebServer".into() }
+    );
+}
+
+#[test]
+fn lookup_prefers_the_exact_case_and_rejects_ambiguous_case() {
+    let mut manager = SessionManager::new();
+    let upper = manager.create_ephem_session(vec![], "Web".into());
+    let lower = manager.create_ephem_session(vec![], "web".into());
+
+    assert_eq!(lookup_id(&manager, "Web"), Some(upper));
+    assert_eq!(lookup_id(&manager, "web"), Some(lower));
+
+    // "WEB" could be either: not found, and both are suggested.
+    let SessionLookup::NotFound { mut similar } = manager.lookup_by_name("WEB") else {
+        panic!("an ambiguous name must not resolve");
+    };
+    similar.sort();
+    assert_eq!(similar, vec!["Web", "web"]);
+}
+
+#[test]
+fn lookup_suggests_similar_names() {
+    let mut manager = SessionManager::new();
+    manager.create_ephem_session(vec![], "webserver".into());
+    manager.create_stopped_sysd_session(unit("database"), false);
+
+    assert_eq!(
+        manager.lookup_by_name("websrever"),
+        SessionLookup::NotFound { similar: vec!["webserver".into()] }
+    );
+    assert_eq!(
+        manager.lookup_by_name("databse"),
+        SessionLookup::NotFound { similar: vec!["database".into()] }
+    );
+    assert_eq!(
+        manager.lookup_by_name("zzz"),
+        SessionLookup::NotFound { similar: vec![] }
+    );
+}
+
+#[test]
+fn lookup_does_not_find_killed_sessions() {
+    let mut manager = SessionManager::new();
+    let id = manager.create_ephem_session(vec![], "gone".into());
+    manager.kill_session(id);
+
+    assert_eq!(lookup_id(&manager, "gone"), None);
 }

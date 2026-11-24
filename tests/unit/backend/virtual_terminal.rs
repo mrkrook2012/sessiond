@@ -3,13 +3,14 @@ use std::time::{Duration, Instant};
 
 use daemon_test::backend::terminal_manager::TerminalId;
 use daemon_test::backend::virtual_terminal::{TERMINATE_GRACE, TerminalEvent, VirtualTerminal};
+use daemon_test::backend::guid::Guid;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use crate::support::{eventually, screen_text};
 
 fn terminal(rows: u16, cols: u16) -> (VirtualTerminal, UnboundedReceiver<TerminalEvent>) {
     let (events, receiver) = unbounded_channel();
-    (VirtualTerminal::new(TerminalId(1), rows, cols, events), receiver)
+    (VirtualTerminal::new(TerminalId(Guid::from_u128(1)), rows, cols, events), receiver)
 }
 
 fn text(terminal: &VirtualTerminal) -> String {
@@ -72,6 +73,72 @@ fn running_command_and_its_directory_are_reported() {
     assert_eq!(terminal.get_current_pwd(), "/tmp");
 }
 
+/// Regression: right after a launch, the command and directory used to be whatever the
+/// shell last reported, because it had not read the launch yet. Exporting a session just
+/// after `run` then saved `""`, `clear` or the `cd` instead of the command.
+#[test]
+fn launch_is_reported_before_the_shell_gets_to_it() {
+    let (mut terminal, _events) = terminal(24, 80);
+    // Keep the shell busy so it cannot read the launch for a while.
+    terminal.execute_command("sleep 1".into());
+    eventually("the shell to be busy", || {
+        (terminal.get_current_command() == "sleep 1").then_some(())
+    });
+
+    terminal.launch("/tmp", Some("sleep 300".into()), false);
+    assert_eq!(terminal.get_current_command(), "sleep 300");
+    assert_eq!(terminal.get_current_pwd(), "/tmp");
+
+    // Still true while the shell is busy, and once it has started the command.
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(terminal.get_current_command(), "sleep 300");
+    eventually("the launched command to start", || {
+        text(&terminal).contains("sleep 300").then_some(())
+    });
+    std::thread::sleep(Duration::from_millis(1200));
+    assert_eq!(terminal.get_current_command(), "sleep 300");
+    assert_eq!(terminal.get_current_pwd(), "/tmp");
+}
+
+#[test]
+fn after_a_launch_the_shell_reports_take_over() {
+    let (mut terminal, _events) = terminal(24, 80);
+    terminal.launch("/tmp", Some("true".into()), false);
+    eventually("the launched command to finish", || {
+        text(&terminal).contains("true").then_some(())
+    });
+
+    terminal.execute_command("cd / && sleep 301".into());
+    eventually("the next command to be reported", || {
+        (terminal.get_current_command() == "sleep 301").then_some(())
+    });
+    assert_eq!(terminal.get_current_pwd(), "/");
+}
+
+#[test]
+fn launch_without_a_command_reports_the_directory() {
+    let (mut terminal, _events) = terminal(24, 80);
+    terminal.launch("/tmp", None, false);
+    assert_eq!(terminal.get_current_command(), "");
+    assert_eq!(terminal.get_current_pwd(), "/tmp");
+
+    terminal.execute_command("sleep 302".into());
+    eventually("the typed command to be reported", || {
+        (terminal.get_current_command() == "sleep 302").then_some(())
+    });
+    assert_eq!(terminal.get_current_pwd(), "/tmp");
+}
+
+#[test]
+fn tracked_launch_reports_its_exit_code() {
+    let (mut terminal, mut events) = terminal(24, 80);
+    terminal.launch("/tmp", Some("(exit 7)".into()), true);
+
+    let TerminalEvent::TrackedCommandExited { code, .. } =
+        eventually("tracked exit", || events.try_recv().ok());
+    assert_eq!(code, 7);
+}
+
 #[test]
 fn tracked_command_reports_its_exit_code() {
     let (mut terminal, mut events) = terminal(24, 80);
@@ -79,7 +146,7 @@ fn tracked_command_reports_its_exit_code() {
 
     let TerminalEvent::TrackedCommandExited { terminal_id, code } =
         eventually("tracked exit", || events.try_recv().ok());
-    assert_eq!(terminal_id, TerminalId(1));
+    assert_eq!(terminal_id, TerminalId(Guid::from_u128(1)));
     assert_eq!(code, 5);
 }
 

@@ -10,7 +10,7 @@ use crate::backend::{
 };
 use crate::ipc::{
     consts::socket_path,
-    protocol::{SessionInfo, SysdAction, SysdWaitStatus, TerminalUpdate},
+    protocol::{SessionInfo, SessionLookup, SysdAction, SysdWaitStatus, TerminalUpdate},
     service::DaemonServiceClient,
 };
 
@@ -124,6 +124,11 @@ impl DaemonClient {
 
     pub async fn list_sessions(&self) -> Result<Vec<SessionInfo>> {
         self.rpc_call(self.client.list_sessions(context::current()))
+            .await
+    }
+
+    pub async fn session_id_by_name(&self, name: &str) -> Result<SessionLookup> {
+        self.rpc_call(self.client.session_id_by_name(context::current(), name.to_owned()))
             .await
     }
 

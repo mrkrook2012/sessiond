@@ -1,4 +1,4 @@
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use std::path::PathBuf;
 
 use crate::backend::mini_user_manager::MiniUserManager;
@@ -14,7 +14,7 @@ use crate::backend::window_manager::{WindowId, WindowManager};
 use crate::backend::yaml::models::{YamlSession, YamlWindow};
 use crate::backend::yaml::yaml_manager::YamlManager;
 use crate::ipc::consts::socket_path;
-use crate::ipc::protocol::{SessionInfo, SysdWaitStatus, TerminalUpdate};
+use crate::ipc::protocol::{SessionInfo, SessionLookup, SysdWaitStatus, TerminalUpdate};
 use color_eyre::eyre::{Result, bail};
 
 /// Entry point for IPC requests. Holds no logic of its own beyond coordinating:
@@ -25,7 +25,6 @@ pub struct DaemonManager {
     store: SessionStore,
     /// Bumped whenever something a `wait_sysd_session` caller cares about may have changed.
     changes: watch::Sender<u64>,
-    shutting_down: bool,
 }
 
 impl DaemonManager {
@@ -46,7 +45,6 @@ impl DaemonManager {
             ),
             store: SessionStore::new(yaml_manager, systemd_manager),
             changes: watch::Sender::new(0),
-            shutting_down: false,
         }
     }
 
@@ -60,12 +58,7 @@ impl DaemonManager {
     /// Subscribing under the same lock as the check means no change can be missed.
     pub fn sysd_wait_status(&self, name: &str, run: RunId) -> (SysdWaitStatus, watch::Receiver<u64>) {
         let receiver = self.changes.subscribe();
-        let status = if self.shutting_down {
-            SysdWaitStatus::ShuttingDown
-        } else {
-            self.runtime.sysd_wait_status(name, run)
-        };
-        (status, receiver)
+        (self.runtime.sysd_wait_status(name, run), receiver)
     }
 
     pub fn handle_terminal_event(&mut self, event: TerminalEvent) {
@@ -76,14 +69,6 @@ impl DaemonManager {
                 }
             }
         }
-    }
-
-    /// First half of a requested shutdown: lets waiting `__internal-systemd-start`
-    /// processes exit cleanly, so systemd does not restart them (and with them, the daemon).
-    pub fn begin_shutdown(&mut self) {
-        info!("Shutdown requested");
-        self.shutting_down = true;
-        self.notify_changed();
     }
 
     // ------------------------------------------------ pure runtime delegation
@@ -119,6 +104,10 @@ impl DaemonManager {
 
     pub fn handle_list_sessions(&self) -> Vec<SessionInfo> {
         self.runtime.all_session_info()
+    }
+
+    pub fn handle_session_id_by_name(&self, name: &str) -> SessionLookup {
+        self.runtime.lookup_by_name(name)
     }
 
     pub fn get_all_session_info(&self) -> Vec<SessionInfo> {
@@ -327,8 +316,19 @@ impl DaemonManager {
 
     // ------------------------------------------------ process
 
-    pub fn handle_kill_deamon(&self) -> ! {
-        std::fs::remove_file(socket_path()).unwrap();
+    /// Stops the daemon and every process it started.
+    ///
+    /// The socket file goes first: a waiting `__internal-systemd-start` that loses its
+    /// connection checks for it to tell this requested shutdown from a crash (and only
+    /// fails, making systemd restart it, on a crash). Holding the manager lock throughout
+    /// also keeps tracked commands that die below from being reported as exits.
+    pub fn handle_kill_deamon(&mut self) -> ! {
+        info!("Shutdown requested");
+        if let Err(e) = std::fs::remove_file(socket_path()) {
+            warn!("Failed to remove socket {}: {e}", socket_path().display());
+        }
+        self.runtime.shutdown();
+        info!("All sessions stopped, exiting");
         std::process::exit(0);
     }
 }

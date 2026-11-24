@@ -111,5 +111,36 @@ fn run_keeps_arguments_with_spaces_intact() {
     let (_, yaml) = h.export("quoted", &h.dir.path().join("export"));
     let session: daemon_test::backend::yaml::models::YamlSession =
         serde_yaml::from_str(&yaml).unwrap();
+    // Exported right after `run`: the daemon must not depend on the shell having caught up.
     assert_eq!(session.windows[0].command, "sh -c 'sleep 300'");
+    let cwd = std::env::current_dir().unwrap();
+    assert_eq!(session.windows[0].working_directory, cwd.to_str().unwrap());
+}
+
+#[test]
+fn unknown_session_suggests_similar_names() {
+    let h = Harness::new();
+    h.ok(&["run", "-n", "webserver", "sleep", "300"]);
+    h.ok(&["run", "-n", "database", "sleep", "300"]);
+
+    let err = h.fails(&["kill", "websrever"]);
+    assert!(err.contains("Session not found: 'websrever'"), "got: {err}");
+    assert!(err.contains("Did you mean 'webserver'?"), "got: {err}");
+
+    let err = h.fails(&["attach", "zzz"]);
+    assert!(err.contains("list` to see all sessions"), "got: {err}");
+
+    let mut sessions = h.sessions();
+    sessions.sort();
+    assert_eq!(sessions, vec!["database", "webserver"]);
+}
+
+#[test]
+fn session_names_are_matched_ignoring_case() {
+    let h = Harness::new();
+    h.ok(&["run", "-n", "webserver", "sleep", "300"]);
+
+    let out = h.ok(&["kill", "WebServer"]);
+    assert!(out.contains("Killed session: webserver"), "got: {out}");
+    assert!(h.sessions().is_empty());
 }
