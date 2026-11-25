@@ -7,13 +7,14 @@ use std::sync::Arc;
 use crate::backend::client_view::ClientView;
 use tokio::sync::{Mutex, watch};
 
-use crate::backend::session::{RunId, SessionId, Sessions};
+use crate::backend::session::Sessions;
 use crate::backend::systemd::UnitName;
 use crate::backend::session_runtime::SessionRuntime;
 use crate::backend::storage::SessionStore;
-use crate::backend::terminal::{TerminalId, Terminals};
+use crate::backend::terminal::Terminals;
 use crate::backend::terminal::virtual_terminal::TerminalEvent;
-use crate::backend::window::{WindowId, Windows};
+use crate::backend::window::Windows;
+use crate::ids::{RunId, SessionId, TerminalId, WindowId};
 use crate::backend::storage::session_files::{SessionFiles, SessionConfig, WindowConfig};
 use crate::backend::systemd::client::{SystemdClient, watch_events};
 use crate::ipc::consts::socket_path;

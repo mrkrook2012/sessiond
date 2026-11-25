@@ -10,7 +10,7 @@ use vt100::{Callbacks, Parser};
 
 use color_eyre::eyre::{Result, eyre};
 
-use crate::backend::terminal::TerminalId;
+use crate::ids::TerminalId;
 
 /// Lines of scrollback kept by the parser, per terminal.
 const SCROLLBACK: usize = 2000;

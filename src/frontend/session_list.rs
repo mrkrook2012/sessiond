@@ -1,7 +1,7 @@
 //! The session list's logic, kept apart from rendering and input so it can be tested:
 //! which systemd operations a session offers, the keys for them, and the list's order.
 
-use crate::backend::session::SessionId;
+use crate::ids::SessionId;
 use crate::ipc::protocol::{SessionInfo, SysdAction, SysdData};
 
 /// A systemd operation the selected session offers, and the key that triggers it.

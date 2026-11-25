@@ -3,11 +3,7 @@ use std::path::PathBuf;
 use color_eyre::eyre::{Result, eyre};
 use tarpc::{client, context, tokio_serde::formats::Bincode};
 
-use crate::backend::{
-    session::{RunId, SessionId},
-    terminal::TerminalId,
-    window::WindowId,
-};
+use crate::ids::{RunId, SessionId, TerminalId, WindowId};
 use crate::ipc::{
     consts::socket_path,
     protocol::{SessionInfo, SessionLookup, SysdAction, SysdWaitStatus, TerminalUpdate},

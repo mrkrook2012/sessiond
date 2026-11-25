@@ -1,9 +1,8 @@
 use daemon_test::backend::session::{
-    SessionId, SessionKind, Sessions, SessionState,
+    SessionKind, Sessions, SessionState,
 };
 use daemon_test::backend::systemd::UnitName;
-use daemon_test::backend::window::WindowId;
-use daemon_test::backend::guid::Guid;
+use daemon_test::ids::{Guid, SessionId, WindowId};
 use daemon_test::ipc::protocol::SessionLookup;
 
 fn unit(name: &str) -> UnitName {

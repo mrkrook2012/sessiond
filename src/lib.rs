@@ -4,5 +4,6 @@
 pub mod backend;
 pub mod cli;
 pub mod frontend;
+pub mod ids;
 pub mod ipc;
 pub mod logging;

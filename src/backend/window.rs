@@ -1,28 +1,19 @@
 use std::collections::HashMap;
 
-use bincode_next::{Decode, Encode};
-use serde::Serialize;
-
 use crate::{
-    backend::{
-        guid::{Guid, GuidManager},
-        terminal::TerminalId,
-    },
+    ids::{GuidGenerator, TerminalId, WindowId},
     ipc::protocol::WindowInfo,
 };
 
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, Encode, Decode, Serialize, serde::Deserialize)]
-pub struct WindowId(pub Guid);
-
 pub struct Windows {
-    guids: GuidManager,
+    guids: GuidGenerator,
     windows: HashMap<WindowId, Window>,
 }
 
 impl Windows {
     pub fn new() -> Self {
         Self {
-            guids: GuidManager::new(),
+            guids: GuidGenerator::new(),
             windows: HashMap::new(),
         }
     }

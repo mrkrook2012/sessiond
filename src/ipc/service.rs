@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 
-use crate::backend::session::{RunId, SessionId};
-use crate::backend::terminal::TerminalId;
-use crate::backend::window::WindowId;
+use crate::ids::{RunId, SessionId, TerminalId, WindowId};
 use crate::ipc::protocol::{SessionInfo, SessionLookup, SysdAction, SysdWaitStatus, TerminalUpdate};
 
 #[tarpc::service]

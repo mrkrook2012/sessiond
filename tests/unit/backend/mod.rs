@@ -1,5 +1,4 @@
 mod daemon;
-mod guid;
 mod client_view;
 mod name_match;
 mod session;

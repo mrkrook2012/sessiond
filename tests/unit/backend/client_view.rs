@@ -1,7 +1,5 @@
 use daemon_test::backend::client_view::ClientView;
-use daemon_test::backend::session::SessionId;
-use daemon_test::backend::terminal::TerminalId;
-use daemon_test::backend::guid::Guid;
+use daemon_test::ids::{Guid, SessionId, TerminalId};
 
 #[test]
 fn defaults() {

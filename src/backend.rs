@@ -1,5 +1,4 @@
 pub mod daemon;
-pub mod guid;
 pub mod client_view;
 pub mod name_match;
 pub mod terminal;

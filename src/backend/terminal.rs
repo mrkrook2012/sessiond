@@ -1,27 +1,21 @@
 pub mod virtual_terminal;
 
 use std::collections::HashMap;
-use bincode_next::{Decode, Encode};
-
-use serde::Serialize;
 
 use std::time::Instant;
 
 use color_eyre::eyre::{Result, eyre};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::backend::guid::{Guid, GuidManager};
+use crate::ids::{GuidGenerator, TerminalId};
 use crate::backend::terminal::virtual_terminal::{
     TERMINATE_GRACE, TerminalEvent, VirtualTerminal, finish_all,
 };
 use crate::ipc::protocol::*;
 // If a second person inspects the same session, we will not resize and their frontend will adapt
 
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, Encode, Decode, Serialize, serde::Deserialize)]
-pub struct TerminalId(pub Guid);
-
 pub struct Terminals {
-    guids: GuidManager,
+    guids: GuidGenerator,
     terminals: HashMap<TerminalId, VirtualTerminal>,
     events: UnboundedSender<TerminalEvent>,
 }
@@ -29,7 +23,7 @@ pub struct Terminals {
 impl Terminals {
     pub fn new(events: UnboundedSender<TerminalEvent>) -> Self {
         Self {
-            guids: GuidManager::new(),
+            guids: GuidGenerator::new(),
             terminals: HashMap::new(),
             events,
         }

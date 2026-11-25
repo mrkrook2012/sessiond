@@ -1,50 +1,27 @@
-use bincode_next::{Decode, Encode};
-use serde::Serialize;
 use std::collections::HashMap;
 
 use color_eyre::eyre::{Ok, OptionExt, Result, bail, eyre};
 
 use crate::{
-    backend::{
-        guid::{Guid, GuidManager},
-        window::WindowId,
-    },
+    ids::{GuidGenerator, RunId, SessionId, WindowId},
     backend::name_match::similar_names,
     backend::systemd::UnitName,
     ipc::protocol::{SessionLookup, SysdData},
 };
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Eq,
-    Hash,
-    PartialEq,
-    Ord,
-    PartialOrd,
-    Encode,
-    Decode,
-    Serialize,
-    serde::Deserialize,
-)]
-pub struct SessionId(pub Guid);
-
 pub struct Sessions {
     /// Source of both `SessionId`s and `RunId`s; every start of a sysd session gets a fresh run.
-    guids: GuidManager,
+    guids: GuidGenerator,
     sessions: HashMap<SessionId, Session>,
 }
 
 impl Sessions {
     pub fn new() -> Self {
         Self {
-            guids: GuidManager::new(),
+            guids: GuidGenerator::new(),
             sessions: HashMap::new(),
         }
     }
-
-
 
     pub fn remove_window(&mut self, id: SessionId, window_id: WindowId) -> Result<()> {
         let session = self
@@ -57,8 +34,6 @@ impl Sessions {
         windows.retain(|&id| id != window_id);
         Ok(())
     }
-
-
 
     pub fn windows(&self, id: SessionId) -> Option<&Vec<WindowId>> {
         let session = self.get(id);
@@ -359,13 +334,6 @@ impl SysdSession {
         }
     }
 }
-
-/// Identifies one start of a sysd session, so a waiter from a previous run
-/// never mistakes the next run's state for its own.
-#[derive(
-    Debug, Clone, Copy, Eq, PartialEq, Hash, Encode, Decode, Serialize, serde::Deserialize,
-)]
-pub struct RunId(pub Guid);
 
 pub enum SessionState {
     Running {
