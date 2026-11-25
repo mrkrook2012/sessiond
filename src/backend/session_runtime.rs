@@ -379,6 +379,11 @@ impl SessionRuntime {
             bail!("Trying to get windowless sessions to yaml, error");
         };
 
+        // A sysd session already says which windows are tracked: a window added later
+        // (a monitor like btop) must not start restarting the service when it is quit.
+        // Ephemeral sessions have no say yet, so everything that runs something is tracked.
+        let infer_tracking = matches!(session.kind, SessionKind::Ephemoral { .. });
+
         let windows = window_ids
             .iter()
             .map(|window_id| {
@@ -387,9 +392,8 @@ impl SessionRuntime {
                     .get_terminal_id_from_window_id(window_id);
 
                 let command = self.terminal_manager.get_command_from_terminal(terminal_id);
-                // Exported windows that run something are tracked by default.
                 let tracked = self.window_manager.get_window_by_id(window_id).tracked
-                    || !command.trim().is_empty();
+                    || (infer_tracking && !command.trim().is_empty());
 
                 YamlWindow {
                     command,

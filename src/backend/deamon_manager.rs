@@ -200,10 +200,35 @@ impl DaemonManager {
 
         let windows = self.runtime.spawn_windows(yaml.windows, true);
         let run = self.runtime.start_or_create_sysd_session(name.clone(), windows)?;
+        self.store.record_sysd_config(name.clone(), file_path);
         info!(session = %name, ?run, "Started sysd session");
         self.notify_changed();
 
         Ok(run)
+    }
+
+    /// Writes the live layout of a running sysd session (its windows, their commands and
+    /// directories) back to the YAML file its unit starts from, so the next start of the
+    /// service brings it back like this. The running session itself is left alone.
+    /// Returns the file written.
+    pub fn handle_update_sysd_session(&mut self, id: SessionId) -> Result<PathBuf> {
+        let unit = self.runtime.sysd_unit(id)?;
+        let running = self
+            .runtime
+            .session_info(id)
+            .and_then(|session| session.sysd_data)
+            .is_some_and(|sysd| sysd.running);
+        if !running {
+            bail!("Service '{unit}' is stopped: start it, change it, then update it");
+        }
+        let Some(path) = self.store.sysd_config(&unit).map(PathBuf::from) else {
+            bail!("Don't know which file service '{unit}' was started from");
+        };
+        let yaml = self.runtime.to_yaml(id)?;
+
+        self.store.save_to(&yaml, &path)?;
+        info!(session = %unit, path = %path.display(), windows = yaml.windows.len(), "Updated sysd session file");
+        Ok(path)
     }
 
     pub fn handle_export_session_to_file(&self, id: SessionId, path: PathBuf) -> Result<PathBuf> {

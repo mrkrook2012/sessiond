@@ -46,7 +46,7 @@ for cmd in attach kill export
 end
 
 # Commands that take a systemd session.
-for action in start stop restart enable disable delete
+for action in start stop restart enable disable update delete
     complete -c daemon_test -n "__daemon_test_at_positional service $action" -f -a "(__daemon_test_sessions --services)"
 end
 

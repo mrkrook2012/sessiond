@@ -229,6 +229,11 @@ impl DaemonClient {
         .await
     }
 
+    pub async fn update_sysd_session(&self, id: SessionId) -> Result<PathBuf> {
+        self.rpc_call_result(self.client.update_sysd_session(context::current(), id))
+            .await
+    }
+
     pub async fn stop_sysd_session(&self, id: SessionId) -> Result<()> {
         self.rpc_call_result(self.client.stop_sysd_session(context::current(), id))
             .await

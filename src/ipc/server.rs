@@ -282,6 +282,18 @@ impl DaemonService for DaemonRpcServer {
             .map_err(|e| e.to_string())
     }
 
+    async fn update_sysd_session(
+        self,
+        _: context::Context,
+        id: SessionId,
+    ) -> Result<std::path::PathBuf, String> {
+        self.manager
+            .lock()
+            .await
+            .handle_update_sysd_session(id)
+            .map_err(|e| e.to_string())
+    }
+
     async fn delete_sysd_session(
         self,
         _: context::Context,

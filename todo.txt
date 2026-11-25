@@ -7,9 +7,9 @@ todo:
   - Add order to cli command structure V
   - Add removing stale sysd services V
 
-  - Fix ctrl in terminal to skip words
-  - Fix btop in terminal
-  - Add scrollback to terminals 
+  - Fix ctrl in terminal to skip words V
+  - Fix btop in terminal V
+  - Add scrollback to terminals V
   
   - Add process tracking based restart V
   - Add adding stale sysd services V

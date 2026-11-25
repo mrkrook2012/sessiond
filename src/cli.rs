@@ -121,6 +121,9 @@ pub enum ServiceCommands {
     Enable { name: String },
     /// Disables the service at boot
     Disable { name: String },
+    /// Saves the running service's current windows to its session file, so the next
+    /// (re)start brings them back
+    Update { name: String },
     /// Deletes the systemd-managed session
     Delete { name: String },
 }
@@ -444,6 +447,16 @@ async fn handle_service(action: ServiceCommands) -> Result<()> {
             }
             Ok(())
         }
+        ServiceCommands::Update { name } => {
+            let rpc = connect().await?;
+            let (id, name) = find_session(&rpc, &name).await?;
+
+            let path = rpc.update_sysd_session(id).await?;
+
+            println!("Updated service: {name}");
+            println!("  wrote {}", path.display());
+            Ok(())
+        }
         action => {
             let (name, sysd_action, past_tense) = match action {
                 ServiceCommands::Start { name } => (name, SysdAction::Start, "Started"),
@@ -451,7 +464,7 @@ async fn handle_service(action: ServiceCommands) -> Result<()> {
                 ServiceCommands::Restart { name } => (name, SysdAction::Restart, "Restarted"),
                 ServiceCommands::Enable { name } => (name, SysdAction::Enable, "Enabled"),
                 ServiceCommands::Disable { name } => (name, SysdAction::Disable, "Disabled"),
-                ServiceCommands::Delete { .. } => unreachable!(),
+                ServiceCommands::Delete { .. } | ServiceCommands::Update { .. } => unreachable!(),
             };
 
             let rpc = connect().await?;

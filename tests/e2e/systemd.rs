@@ -16,6 +16,7 @@ fn service_commands_reject_ephemeral_sessions() {
     h.fails(&["service", "restart", "ephemeral"]);
     h.fails(&["service", "enable", "ephemeral"]);
     h.fails(&["service", "disable", "ephemeral"]);
+    h.fails(&["service", "update", "ephemeral"]);
 
     // The failed operations must not have killed the session.
     assert_eq!(h.sessions(), vec!["ephemeral"]);

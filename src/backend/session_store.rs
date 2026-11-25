@@ -1,4 +1,5 @@
 use tracing::{debug, info, warn};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
  
 use crate::backend::session_manager::UnitName;
@@ -13,18 +14,37 @@ use color_eyre::eyre::Result;
 pub struct SessionStore {
     yaml_manager: YamlManager,
     systemd_manager: SystemdServiceManager,
+    /// The YAML file each sysd session was last started from: the one its unit's
+    /// `ExecStart` points at, and so the one an update must overwrite.
+    sysd_configs: HashMap<UnitName, PathBuf>,
 }
- 
+
 impl SessionStore {
     pub fn new(yaml_manager: YamlManager, systemd_manager: SystemdServiceManager) -> Self {
         Self {
             yaml_manager,
             systemd_manager,
+            sysd_configs: HashMap::new(),
         }
     }
- 
+
     pub fn load(&mut self, file_path: &Path) -> Result<YamlSession> {
         self.yaml_manager.load_session(file_path)
+    }
+
+    /// Remembers that `unit` was started from `path`.
+    pub fn record_sysd_config(&mut self, unit: UnitName, path: PathBuf) {
+        self.sysd_configs.insert(unit, path);
+    }
+
+    /// The file `unit` was started from, if it was started by this daemon.
+    pub fn sysd_config(&self, unit: &UnitName) -> Option<&Path> {
+        self.sysd_configs.get(unit).map(PathBuf::as_path)
+    }
+
+    /// Overwrites the YAML file at `path`.
+    pub fn save_to(&self, session: &YamlSession, path: &Path) -> Result<()> {
+        self.yaml_manager.save_session_to(session, path)
     }
  
     /// Saves to the default session location and returns the path.
@@ -114,6 +134,7 @@ impl SessionStore {
             }
         }
 
+        self.sysd_configs.remove(unit);
         Ok(files)
     }
 }

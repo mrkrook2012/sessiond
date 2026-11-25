@@ -61,9 +61,18 @@ impl YamlManager {
         Ok(path)
     }
 
-    pub fn save_session_to(&self, session: &YamlSession, path: &PathBuf) -> Result<()> {
+    /// Writes via a temporary file and a rename, so the file is never seen half written:
+    /// a systemd unit may load it at any moment.
+    pub fn save_session_to(&self, session: &YamlSession, path: &Path) -> Result<()> {
         let yaml = self.serialize_session(session)?;
-        fs::write(path, yaml)?;
+        let mut tmp = path.as_os_str().to_owned();
+        tmp.push(".tmp");
+        let tmp = PathBuf::from(tmp);
+        fs::write(&tmp, yaml)?;
+        if let Err(e) = fs::rename(&tmp, path) {
+            let _ = fs::remove_file(&tmp);
+            return Err(e.into());
+        }
         Ok(())
     }
 

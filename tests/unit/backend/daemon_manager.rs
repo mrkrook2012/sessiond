@@ -221,6 +221,67 @@ fn state_changes_wake_waiters() {
     assert!(changes.has_changed().unwrap());
 }
 
+// ------------------------------------------------------------------ sysd update
+
+#[test]
+fn update_saves_added_windows_to_the_file_the_service_started_from() {
+    let mut f = Fixture::new();
+    let path = f.yaml("Server", &[("sleep 300", true)]);
+    f.manager.handle_start_sysd_session_from_file(path.clone()).unwrap();
+    let id = f.id("server");
+
+    // Add a window and run a monitor in it, like btop next to a game server.
+    let info = f.manager.handle_create_window(id);
+    let monitor = info.windows_info[1].terminal_id;
+    f.manager.handle_write(monitor, b"sleep 302\r".to_vec());
+
+    let yaml = eventually("the monitor to be saved", || {
+        let written = f.manager.handle_update_sysd_session(id).unwrap();
+        assert_eq!(written, path, "must overwrite the file the unit starts from");
+        let yaml = YamlManager::with_dir(f.dir.path().to_path_buf())
+            .unwrap()
+            .load_session(&path)
+            .unwrap();
+        (yaml.windows.get(1).is_some_and(|w| w.command == "sleep 302")).then_some(yaml)
+    });
+
+    // The name inside the file is unchanged, so the unit still matches it.
+    assert_eq!(yaml.name, "server");
+    assert_eq!(yaml.windows.len(), 2);
+    assert_eq!(yaml.windows[0].command, "sleep 300");
+    assert!(yaml.windows[0].tracked, "the server stays tracked");
+    // Quitting the monitor must not restart the service.
+    assert!(!yaml.windows[1].tracked, "added windows are not tracked");
+
+    // The running session was left alone.
+    assert!(f.session("server").unwrap().sysd_data.unwrap().running);
+    assert_eq!(f.session("server").unwrap().windows_info.len(), 2);
+
+    // And the next start brings both windows back.
+    f.manager.handle_start_sysd_session_from_file(path).unwrap();
+    assert_eq!(f.session("server").unwrap().windows_info.len(), 2);
+}
+
+#[test]
+fn update_rejects_ephemeral_and_stopped_sessions_without_writing() {
+    let mut f = Fixture::new();
+    f.manager
+        .handle_create_session("/tmp".into(), Some("sleep 300".into()), Some("eph".into()));
+    assert!(f.manager.handle_update_sysd_session(f.id("eph")).is_err());
+
+    let path = f.yaml("svc", &[("sleep 300", true)]);
+    let before = fs::read_to_string(&path).unwrap();
+    f.manager.handle_start_sysd_session_from_file(path.clone()).unwrap();
+    let id = f.id("svc");
+    f.manager.handle_stop_sysd_session(id).unwrap();
+
+    let error = f.manager.handle_update_sysd_session(id).unwrap_err();
+    assert!(error.to_string().contains("stopped"), "got: {error}");
+    assert_eq!(fs::read_to_string(&path).unwrap(), before);
+
+    assert!(f.manager.handle_update_sysd_session(SessionId(Guid::from_u128(9))).is_err());
+}
+
 // ------------------------------------------------------------------ sysd delete
 
 #[test]

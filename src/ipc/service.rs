@@ -94,4 +94,8 @@ pub trait DaemonService {
 
     /// Stop a systemd session.
     async fn stop_sysd_session(id: SessionId) -> Result<(), String>;
+
+    /// Save the current windows of a running systemd session to the YAML file its unit
+    /// starts from. Returns that file.
+    async fn update_sysd_session(id: SessionId) -> Result<PathBuf, String>;
 }

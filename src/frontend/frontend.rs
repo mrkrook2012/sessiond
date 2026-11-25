@@ -114,6 +114,12 @@ enum Command {
         id: SessionId,
         working_dir: PathBuf,
     },
+    /// Save the systemd session's current windows to the file its unit starts from.
+    UpdateService {
+        id: SessionId,
+        /// For the status line.
+        name: String,
+    },
     /// Start / stop / restart / enable / disable a systemd session.
     SysdAction {
         id: SessionId,
@@ -142,6 +148,9 @@ struct AppState {
     scrollback: u32,
     input_mode: InputMode,
     status: String,
+    /// The outcome of a command given inside a session (Ctrl-b u), shown in the
+    /// session's title bar until the next Ctrl-b.
+    notice: Option<String>,
     should_quit: bool,
     // Last (rows, cols) we told the server about, so we don't spam
     // UpdateScreenSize on every coalesced resize event. Also doubles as
@@ -161,6 +170,7 @@ impl AppState {
             scrollback: 0,
             input_mode: InputMode::Normal,
             status: String::new(),
+            notice: None,
             should_quit: false,
             last_sent_size: (initial_rows, initial_cols),
         }
@@ -525,6 +535,17 @@ async fn handle_command(
             state.lock().unwrap().status = format!("Exported to {}", path.display());
         }
 
+        Command::UpdateService { id, name } => {
+            let result = client.update_sysd_session(id).await;
+            let mut st = state.lock().unwrap();
+            let message = match result {
+                Ok(path) => format!("Saved layout of service '{name}' to {}", path.display()),
+                Err(e) => format!("Error: {e}"),
+            };
+            st.status = message.clone();
+            st.notice = Some(message);
+        }
+
         Command::SysdAction { id, name, action } => {
             // The reply only says systemd accepted the job; the state the list shows catches
             // up as the unit actually starts or stops (see `run_list_refresher`).
@@ -695,6 +716,7 @@ pub async fn run_frontend() -> Result<()> {
                         // Normal up front.
                         if matches!(st.input_mode, InputMode::PrefixPending) {
                             st.input_mode = InputMode::Normal;
+                            st.notice = None;
                             let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
 
                             match key.code {
@@ -799,6 +821,21 @@ pub async fn run_frontend() -> Result<()> {
                                         send(Command::ChangeWindow { window_id });
                                     }
                                 }
+                                // u: save this service's windows as its layout,
+                                // so its next (re)start brings them back.
+                                KeyCode::Char('u') => match st.current_session.as_ref() {
+                                    Some(session) if session.sysd_data.is_some() => {
+                                        let (id, name) = (session.id, session.name.clone());
+                                        st.notice = Some(format!("Saving layout of '{name}'..."));
+                                        send(Command::UpdateService { id, name });
+                                    }
+                                    Some(_) => {
+                                        st.notice = Some(
+                                            "Not a systemd service: only services have a layout to save".to_owned(),
+                                        );
+                                    }
+                                    None => {}
+                                },
                                 // d: detach (leave the session, back to the
                                 // session list)
                                 KeyCode::Char('d') => {
@@ -907,6 +944,31 @@ pub async fn run_frontend() -> Result<()> {
                                         None => {}
                                     }
                                 }
+                                // u: save a running service's windows as its layout.
+                                KeyCode::Char('u') => match st.selected_session() {
+                                    Some(SessionInfo {
+                                        id,
+                                        name,
+                                        sysd_data: Some(SysdData { running: true, .. }),
+                                        ..
+                                    }) => {
+                                        let (id, name) = (*id, name.clone());
+                                        st.status = format!("Saving layout of '{name}'...");
+                                        send(Command::UpdateService { id, name });
+                                    }
+                                    Some(SessionInfo { name, sysd_data: Some(_), .. }) => {
+                                        st.status = format!(
+                                            "Service '{name}' is stopped, start it to change its layout"
+                                        );
+                                    }
+                                    Some(session) => {
+                                        st.status = format!(
+                                            "'{}' is not a systemd service (press e to turn it into one)",
+                                            session.name
+                                        );
+                                    }
+                                    None => {}
+                                },
                                 // f: export the selected session to a file in
                                 // the directory the frontend was started in.
                                 KeyCode::Char('f') => {
@@ -1102,6 +1164,9 @@ fn selected_session_keybinds(session: Option<&SessionInfo>) -> Line<'static> {
             for service_key in service_keys(sysd) {
                 spans.extend(keybind(service_key.key, service_key.label));
             }
+            if sysd.running {
+                spans.extend(keybind("u", "save layout"));
+            }
         }
         None => {
             spans.extend(keybind("o/Enter", "open"));
@@ -1195,6 +1260,10 @@ fn draw_terminal_screen(frame: &mut ratatui::Frame, area: Rect, st: &AppState) {
         let [running, autostart] = service_state_spans(sysd);
         title.extend([Span::raw("[service "), running, Span::raw(", "), autostart, Span::raw("] ")]);
     }
+    if let Some(notice) = &st.notice {
+        let color = if notice.starts_with("Error") { Color::Red } else { Color::Green };
+        title.push(Span::styled(format!("{notice} "), Style::default().fg(color)));
+    }
     let scrolled = st
         .terminal_widget
         .as_ref()
@@ -1250,7 +1319,11 @@ fn draw_terminal_screen(frame: &mut ratatui::Frame, area: Rect, st: &AppState) {
     .block(Block::default().borders(Borders::ALL));
     frame.render_widget(prefix_box, bottom_chunks[0]);
 
-    let keybinds = Line::from(vec![
+    let is_service = st
+        .current_session
+        .as_ref()
+        .is_some_and(|s| s.sysd_data.is_some());
+    let mut keybinds = vec![
         Span::styled(" c ", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw("new window  "),
         Span::styled(" n/p ", Style::default().add_modifier(Modifier::BOLD)),
@@ -1261,9 +1334,18 @@ fn draw_terminal_screen(frame: &mut ratatui::Frame, area: Rect, st: &AppState) {
         Span::raw("kill window  "),
         Span::styled(" d ", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw("detach    "),
+    ];
+    if is_service {
+        keybinds.extend([
+            Span::styled(" u ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw("save layout    "),
+        ]);
+    }
+    keybinds.extend([
         Span::styled(" wheel / Shift+PgUp/PgDn ", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw("scroll history"),
     ]);
+    let keybinds = Line::from(keybinds);
 
     let bar = Paragraph::new(keybinds).block(Block::default().borders(Borders::ALL));
     frame.render_widget(bar, bottom_chunks[1]);
