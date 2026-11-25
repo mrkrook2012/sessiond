@@ -5,7 +5,7 @@ use color_eyre::eyre::Result;
 use tokio::sync::Mutex;
 
 use crate::backend::daemon_manager::DaemonManager;
-use crate::backend::mini_user_manager::MiniUserManager;
+use crate::backend::client_view::ClientView;
 use crate::backend::session_manager::SessionManager;
 use crate::backend::systemd_client::{SystemdClient, watch_events};
 use crate::backend::systemd_service_manager::SystemdServiceManager;
@@ -15,7 +15,7 @@ use crate::backend::yaml::yaml_manager::YamlManager;
 use crate::ipc::server::run_server;
 
 pub async fn run_daemon() -> Result<()> {
-    let user_manager = MiniUserManager::new();
+    let view = ClientView::new();
     let window_manager = WindowManager::new();
     let (terminal_events, mut terminal_event_receiver) = tokio::sync::mpsc::unbounded_channel();
     let terminal_manager = TerminalManager::new(terminal_events);
@@ -26,7 +26,7 @@ pub async fn run_daemon() -> Result<()> {
     
 
     let mut daemon_manager = DaemonManager::new(
-        user_manager,
+        view,
         terminal_manager,
         window_manager,
         session_manager,

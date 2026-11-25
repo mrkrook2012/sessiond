@@ -1,13 +1,12 @@
 mod daemon_manager;
 mod guid;
-mod mini_user_manager;
+mod client_view;
 mod name_match;
 mod session_manager;
 mod session_runtime;
 mod systemd_client;
 mod systemd_manager;
 mod terminal_manager;
-mod user_manager;
 mod virtual_terminal;
 mod window_manager;
 mod yaml;

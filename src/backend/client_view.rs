@@ -1,41 +1,39 @@
 use crate::backend::{guid::Guid, session_manager::SessionId, terminal_manager::TerminalId};
 
-pub struct MiniUserManager {
+/// What the attached client is looking at: its screen size, the session it has open
+/// and the terminals currently visible to it.
+pub struct ClientView {
     rows: u16,
     cols: u16,
-    current_id: SessionId,
-    visible_terminals: Vec<TerminalId>, 
+    current_session: SessionId,
+    visible_terminals: Vec<TerminalId>,
 }
 
-impl MiniUserManager {
+impl ClientView {
     pub fn new() -> Self {
         Self {
             rows: 100,
             cols: 100,
             // Placeholder until a session is opened; never a real session.
-            current_id: SessionId(Guid::NIL),
+            current_session: SessionId(Guid::NIL),
             visible_terminals: Vec::new(),
         }
-        
     }
 
-    pub fn get_dimensions(&self) -> (u16, u16) {
+    pub fn dimensions(&self) -> (u16, u16) {
         (self.rows, self.cols)
     }
 
-    pub fn update_dimensions(&mut self, rows: u16, cols: u16) {
+    pub fn set_dimensions(&mut self, rows: u16, cols: u16) {
         self.rows = rows;
         self.cols = cols;
     }
-    pub fn add_user(&mut self, rows: u16, cols: u16) {
-        self.rows = rows;
-        self.cols = cols;
-    }
-    pub fn add_terminal(&mut self, terminal_id: TerminalId) {
+
+    pub fn show_terminal(&mut self, terminal_id: TerminalId) {
         self.visible_terminals.push(terminal_id);
     }
 
-    pub fn remove_terminal(&mut self, terminal_id: TerminalId) {
+    pub fn hide_terminal(&mut self, terminal_id: TerminalId) {
         if let Some(pos) = self
             .visible_terminals
             .iter()
@@ -44,19 +42,20 @@ impl MiniUserManager {
             self.visible_terminals.remove(pos);
         }
     }
-    pub fn get_current_id(&self) -> SessionId {
-        self.current_id
+
+    pub fn current_session(&self) -> SessionId {
+        self.current_session
     }
 
-    pub fn set_current_id(&mut self, id: SessionId) {
-        self.current_id = id
+    pub fn set_current_session(&mut self, id: SessionId) {
+        self.current_session = id
     }
 
-    pub fn clear_all(&mut self) {
+    pub fn hide_all(&mut self) {
         self.visible_terminals.clear()
     }
 
-    pub fn get_all_terminals(&self) -> &[TerminalId] {
+    pub fn visible_terminals(&self) -> &[TerminalId] {
         &self.visible_terminals
     }
 }

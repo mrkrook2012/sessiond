@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use daemon_test::backend::daemon_manager::DaemonManager;
-use daemon_test::backend::mini_user_manager::MiniUserManager;
+use daemon_test::backend::client_view::ClientView;
 use daemon_test::backend::session_manager::{RunId, SessionId, SessionManager, UnitName};
 use daemon_test::backend::systemd_service_manager::SystemdServiceManager;
 use daemon_test::backend::terminal_manager::TerminalManager;
@@ -30,7 +30,7 @@ impl Fixture {
         let dir = TempDir::new().unwrap();
         let (events_tx, events) = unbounded_channel();
         let manager = DaemonManager::new(
-            MiniUserManager::new(),
+            ClientView::new(),
             TerminalManager::new(events_tx),
             WindowManager::new(),
             SessionManager::new(),

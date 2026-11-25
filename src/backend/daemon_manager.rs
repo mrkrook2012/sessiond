@@ -1,7 +1,7 @@
 use tracing::{debug, info, warn};
 use std::path::PathBuf;
 
-use crate::backend::mini_user_manager::MiniUserManager;
+use crate::backend::client_view::ClientView;
 use tokio::sync::watch;
 
 use crate::backend::session_manager::{RunId, SessionId, SessionManager, UnitName};
@@ -29,7 +29,7 @@ pub struct DaemonManager {
 
 impl DaemonManager {
     pub fn new(
-        user_manager: MiniUserManager,
+        view: ClientView,
         terminal_manager: TerminalManager,
         window_manager: WindowManager,
         session_manager: SessionManager,
@@ -38,7 +38,7 @@ impl DaemonManager {
     ) -> Self {
         Self {
             runtime: SessionRuntime::new(
-                user_manager,
+                view,
                 terminal_manager,
                 window_manager,
                 session_manager,

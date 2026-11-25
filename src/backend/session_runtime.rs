@@ -6,7 +6,7 @@ use crate::backend::session_manager::{
 };
 use crate::backend::terminal_manager::{TerminalId, TerminalManager};
 use crate::backend::window_manager::{WindowId, WindowManager};
-use crate::backend::mini_user_manager::MiniUserManager;
+use crate::backend::client_view::ClientView;
 use crate::backend::yaml::models::{YamlSession, YamlWindow};
 use crate::ipc::protocol::{SessionInfo, SessionLookup, SysdWaitStatus, TerminalUpdate};
 use color_eyre::eyre::{OptionExt, Result, bail, eyre};
@@ -15,11 +15,11 @@ use color_eyre::eyre::{OptionExt, Result, bail, eyre};
 /// counts as stopped by hand (Ctrl+C, `stop` in a server console), and does not restart the session.
 const MANUAL_STOP_WINDOW: Duration = Duration::from_secs(30);
 
-/// Everything that concerns *live* state: users, terminals, windows and sessions.
+/// Everything that concerns *live* state: the client view, terminals, windows and sessions.
 ///
 /// It knows nothing about YAML files or systemd. Persistence lives in `SessionStore`.
 pub struct SessionRuntime {
-    user_manager: MiniUserManager,
+    view: ClientView,
     terminal_manager: TerminalManager,
     window_manager: WindowManager,
     session_manager: SessionManager,
@@ -27,13 +27,13 @@ pub struct SessionRuntime {
 
 impl SessionRuntime {
     pub fn new(
-        user_manager: MiniUserManager,
+        view: ClientView,
         terminal_manager: TerminalManager,
         window_manager: WindowManager,
         session_manager: SessionManager,
     ) -> Self {
         Self {
-            user_manager,
+            view,
             terminal_manager,
             window_manager,
             session_manager,
@@ -58,25 +58,25 @@ impl SessionRuntime {
     /// A client connected with a screen of this size. Every terminal is sized to it, so
     /// what programs draw (and what the client is sent) fits the client's pane.
     pub fn add_user(&mut self, rows: u16, cols: u16) {
-        self.user_manager.add_user(rows, cols);
+        self.view.set_dimensions(rows, cols);
         self.terminal_manager.resize_all_terminals(rows, cols);
     }
 
     pub fn update_screen_size(&mut self, rows: u16, cols: u16) {
-        self.user_manager.update_dimensions(rows, cols);
+        self.view.set_dimensions(rows, cols);
         self.terminal_manager.resize_all_terminals(rows, cols);
     }
 
     pub fn change_window(&mut self, window_id: WindowId) -> Result<()> {
         let terminal_id = self.terminal_of(window_id)?;
 
-        self.user_manager.clear_all();
-        self.user_manager.add_terminal(terminal_id);
+        self.view.hide_all();
+        self.view.show_terminal(terminal_id);
         Ok(())
     }
 
     pub fn exit_session(&mut self) {
-        self.user_manager.clear_all();
+        self.view.hide_all();
     }
 
     pub fn open_session(&mut self, id: SessionId) -> Result<SessionInfo> {
@@ -87,8 +87,8 @@ impl SessionRuntime {
             .ok_or_else(|| eyre!("No windows found for session"))?;
         let terminal_id = self.terminal_of(window_id)?;
 
-        self.user_manager.set_current_id(id);
-        self.user_manager.add_terminal(terminal_id);
+        self.view.set_current_session(id);
+        self.view.show_terminal(terminal_id);
 
         self.session_info(id)
             .ok_or_else(|| eyre!("Session info not found"))
@@ -131,7 +131,7 @@ impl SessionRuntime {
         track: bool,
         tracked: bool,
     ) -> Result<WindowId> {
-        let (rows, cols) = self.user_manager.get_dimensions();
+        let (rows, cols) = self.view.dimensions();
         let terminal_id = self.terminal_manager.create_terminal(rows, cols)?;
         self.terminal_manager
             .launch_on_terminal(terminal_id, working_dir, command, track && tracked)?;
@@ -215,7 +215,7 @@ impl SessionRuntime {
             bail!("Session not found, or it is a stopped service");
         }
 
-        let (rows, cols) = self.user_manager.get_dimensions();
+        let (rows, cols) = self.view.dimensions();
         let terminal_id = self.terminal_manager.create_terminal(rows, cols)?;
         let window_id = self.window_manager.create_window(terminal_id);
 
@@ -224,8 +224,8 @@ impl SessionRuntime {
             return Err(e);
         }
 
-        self.user_manager.clear_all();
-        self.user_manager.add_terminal(terminal_id);
+        self.view.hide_all();
+        self.view.show_terminal(terminal_id);
 
         self.session_info(id)
             .ok_or_eyre("Session not found after adding window")
@@ -249,7 +249,7 @@ impl SessionRuntime {
                 continue;
             };
             self.terminal_manager.kill_terminal(window.terminal_id);
-            self.user_manager.remove_terminal(window.terminal_id);
+            self.view.hide_terminal(window.terminal_id);
         }
     }
 

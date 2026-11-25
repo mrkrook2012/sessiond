@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use daemon_test::backend::mini_user_manager::MiniUserManager;
+use daemon_test::backend::client_view::ClientView;
 use daemon_test::backend::session_manager::{RunId, SessionId, SessionManager, UnitName};
 use daemon_test::backend::session_runtime::SessionRuntime;
 use daemon_test::backend::terminal_manager::{TerminalId, TerminalManager};
@@ -16,7 +16,7 @@ use crate::support::{eventually, screen_text};
 fn runtime() -> (SessionRuntime, UnboundedReceiver<TerminalEvent>) {
     let (events, receiver) = unbounded_channel();
     let runtime = SessionRuntime::new(
-        MiniUserManager::new(),
+        ClientView::new(),
         TerminalManager::new(events),
         WindowManager::new(),
         SessionManager::new(),
