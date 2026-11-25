@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
             // Clean up any stale socket file
             let _ = fs::remove_file(socket_path());
 
-            match backend::deamon::run_daemon().await {
+            match backend::daemon::run_daemon().await {
                 Ok(()) => tracing::info!("Daemon stopped"),
                 Err(e) => tracing::error!("Daemon failed: {e:#}"),
             }
@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
             let _ = logging::LEVEL_FOR_CHILDREN.set(cli.verbose.tracing_level_filter());
 
             cli::ensure_daemon_running().await?;
-            frontend::frontend::run_frontend().await?;
+            frontend::app::run_frontend().await?;
         }
     }
 

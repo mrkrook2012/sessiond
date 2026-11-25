@@ -30,7 +30,7 @@ use crate::frontend::session_list::{
     action_done, action_in_progress, is_service_key, new_session, reselect, service_action_for_key,
     service_keys, sort_sessions,
 };
-use crate::frontend::slop_terrm_widget::TerminalWidget;
+use crate::frontend::terminal_widget::TerminalWidget;
 use crate::ipc::client::DaemonClient;
 use crate::ipc::protocol::{SessionInfo, SysdAction, SysdData, TerminalUpdate, WindowInfo};
 

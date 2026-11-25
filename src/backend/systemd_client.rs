@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 use zbus_systemd::systemd1::{ManagerProxy, UnitProxy};
 use zbus_systemd::zbus::{self, Connection, MatchRule, MessageStream, fdo::PropertiesChanged};
 
-use crate::backend::deamon_manager::DaemonManager;
+use crate::backend::daemon_manager::DaemonManager;
 use crate::backend::session_manager::UnitName;
 
 /// Job mode for start/stop/restart. "replace" is what `systemctl` uses by default.

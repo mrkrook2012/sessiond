@@ -372,7 +372,7 @@ impl DaemonManager {
     /// connection checks for it to tell this requested shutdown from a crash (and only
     /// fails, making systemd restart it, on a crash). Holding the manager lock throughout
     /// also keeps tracked commands that die below from being reported as exits.
-    pub fn handle_kill_deamon(&mut self) -> ! {
+    pub fn handle_kill_daemon(&mut self) -> ! {
         info!("Shutdown requested");
         if let Err(e) = std::fs::remove_file(socket_path()) {
             warn!("Failed to remove socket {}: {e}", socket_path().display());

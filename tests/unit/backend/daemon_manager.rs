@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use daemon_test::backend::deamon_manager::DaemonManager;
+use daemon_test::backend::daemon_manager::DaemonManager;
 use daemon_test::backend::mini_user_manager::MiniUserManager;
 use daemon_test::backend::session_manager::{RunId, SessionId, SessionManager, UnitName};
 use daemon_test::backend::systemd_service_manager::SystemdServiceManager;

@@ -11,7 +11,7 @@ use tarpc::{
 use tokio::sync::Mutex;
 
 use crate::backend::{
-    deamon_manager::DaemonManager,
+    daemon_manager::DaemonManager,
     session_manager::{RunId, SessionId, UnitName},
     systemd_client::SystemdClient,
     terminal_manager::TerminalId, window_manager::WindowId,
@@ -234,7 +234,7 @@ impl DaemonService for DaemonRpcServer {
 
     async fn kill_daemon(self, _: context::Context) {
         // Blocks this worker for at most the terminate grace period, then exits the process.
-        self.manager.lock().await.handle_kill_deamon()
+        self.manager.lock().await.handle_kill_daemon()
     }
 
     async fn export_session_to_file(

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use color_eyre::eyre::Result;
 use tokio::sync::Mutex;
 
-use crate::backend::deamon_manager::DaemonManager;
+use crate::backend::daemon_manager::DaemonManager;
 use crate::backend::mini_user_manager::MiniUserManager;
 use crate::backend::session_manager::SessionManager;
 use crate::backend::systemd_client::{SystemdClient, watch_events};
