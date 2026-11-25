@@ -109,7 +109,7 @@ fn run_keeps_arguments_with_spaces_intact() {
     h.ok(&["run", "-n", "quoted", "sh", "-c", "sleep 300"]);
 
     let (_, yaml) = h.export("quoted", &h.dir.path().join("export"));
-    let session: daemon_test::backend::yaml::models::YamlSession =
+    let session: daemon_test::backend::storage::session_files::SessionConfig =
         serde_yaml::from_str(&yaml).unwrap();
     // Exported right after `run`: the daemon must not depend on the shell having caught up.
     assert_eq!(session.windows[0].command, "sh -c 'sleep 300'");
@@ -161,7 +161,7 @@ fn run_with_one_argument_runs_it_as_a_shell_command_line() {
 
     // And the session remembers the whole line, not just the part running now.
     let (_, yaml) = h.export("compound", &h.dir.path().join("export"));
-    let session: daemon_test::backend::yaml::models::YamlSession =
+    let session: daemon_test::backend::storage::session_files::SessionConfig =
         serde_yaml::from_str(&yaml).unwrap();
     assert_eq!(session.windows[0].command, line);
 }

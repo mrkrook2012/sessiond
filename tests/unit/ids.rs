@@ -1,19 +1,19 @@
 use std::collections::HashSet;
 
-use daemon_test::backend::guid::{Guid, GuidManager};
+use daemon_test::ids::{Guid, GuidGenerator};
 
 #[test]
 fn generated_guids_are_unique() {
-    let mut manager = GuidManager::new();
-    let guids: HashSet<Guid> = (0..100_000).map(|_| manager.generate()).collect();
+    let mut generator = GuidGenerator::new();
+    let guids: HashSet<Guid> = (0..100_000).map(|_| generator.generate()).collect();
     assert_eq!(guids.len(), 100_000);
 }
 
 #[test]
 fn generated_guids_are_version_4_rfc_variant() {
-    let mut manager = GuidManager::new();
+    let mut generator = GuidGenerator::new();
     for _ in 0..1_000 {
-        let text = manager.generate().to_string();
+        let text = generator.generate().to_string();
         let bytes = text.as_bytes();
         assert_eq!(bytes[14], b'4', "version nibble in {text}");
         assert!(matches!(bytes[19], b'8' | b'9' | b'a' | b'b'), "variant nibble in {text}");
@@ -22,9 +22,9 @@ fn generated_guids_are_version_4_rfc_variant() {
 
 #[test]
 fn never_generates_nil_or_small_fixed_values() {
-    let mut manager = GuidManager::new();
+    let mut generator = GuidGenerator::new();
     for _ in 0..1_000 {
-        let guid = manager.generate();
+        let guid = generator.generate();
         assert_ne!(guid, Guid::NIL);
         // Tests use `from_u128` with small numbers as fixed IDs; those must never clash.
         assert!(guid.as_u128() > u32::MAX as u128);

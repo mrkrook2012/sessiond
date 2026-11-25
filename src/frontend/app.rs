@@ -22,15 +22,13 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
-use crate::backend::session_manager::SessionId;
-use crate::backend::terminal_manager::TerminalId;
-use crate::backend::window_manager::WindowId;
+use crate::ids::{SessionId, TerminalId, WindowId};
 use crate::frontend::keys::encode_key;
 use crate::frontend::session_list::{
     action_done, action_in_progress, is_service_key, new_session, reselect, service_action_for_key,
     service_keys, sort_sessions,
 };
-use crate::frontend::slop_terrm_widget::TerminalWidget;
+use crate::frontend::terminal_widget::TerminalWidget;
 use crate::ipc::client::DaemonClient;
 use crate::ipc::protocol::{SessionInfo, SysdAction, SysdData, TerminalUpdate, WindowInfo};
 

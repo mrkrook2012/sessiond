@@ -1,4 +1,4 @@
-pub mod frontend;
+pub mod app;
 pub mod keys;
 pub mod session_list;
-pub mod slop_terrm_widget;
+pub mod terminal_widget;

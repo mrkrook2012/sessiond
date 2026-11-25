@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use crate::backend::session_manager::SessionId;
+use crate::ids::SessionId;
 use crate::ipc::client::DaemonClient;
 use crate::ipc::consts::socket_path;
 use crate::ipc::protocol::{SessionInfo, SessionLookup, SysdAction, SysdWaitStatus};
@@ -36,9 +36,10 @@ pub struct Cli {
 pub enum Commands {
     /// Starts a new session running the given command
     Run {
-        /// Create a systemd service running the command instead of an ephemeral session
-        #[arg(long)]
-        systemd: bool,
+        /// Create a sysd session (a systemd service) running the command instead of an
+        /// ephemeral session
+        #[arg(long, alias = "systemd")]
+        sysd: bool,
 
         /// Name of the session (random if omitted)
         #[arg(short, long)]
@@ -97,11 +98,12 @@ pub enum Commands {
     /// fish: daemon_test completions fish > ~/.config/fish/completions/daemon_test.fish
     Completions { shell: CompletionShell },
 
-    // Internal commands, invoked by the generated systemd units.
-    #[command(name = "__internal-systemd-start", hide = true)]
-    InternalSystemdStart { config: PathBuf },
-    #[command(name = "__internal-systemd-stop", hide = true)]
-    InternalSystemdStop { name: String },
+    // Internal commands, invoked by the generated systemd units. The `systemd` aliases keep
+    // unit files written by older versions working.
+    #[command(name = "__internal-sysd-start", alias = "__internal-systemd-start", hide = true)]
+    InternalSysdStart { config: PathBuf },
+    #[command(name = "__internal-sysd-stop", alias = "__internal-systemd-stop", hide = true)]
+    InternalSysdStop { name: String },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -147,10 +149,10 @@ pub enum DaemonCommands {
 pub async fn dispatch(command: Commands) -> Result<()> {
     match command {
         Commands::Run {
-            systemd,
+            sysd,
             name,
             command,
-        } => handle_run(systemd, name, command).await,
+        } => handle_run(sysd, name, command).await,
         Commands::List { names, services } => handle_list_sessions(names, services).await,
         Commands::Attach { name } => handle_attach_session(name).await,
         Commands::Kill { name, all } => match (name, all) {
@@ -170,8 +172,8 @@ pub async fn dispatch(command: Commands) -> Result<()> {
             print_completions(shell);
             Ok(())
         }
-        Commands::InternalSystemdStart { config } => handle_internal_systemd_start(config).await,
-        Commands::InternalSystemdStop { name } => handle_internal_systemd_stop(name).await,
+        Commands::InternalSysdStart { config } => handle_internal_sysd_start(config).await,
+        Commands::InternalSysdStop { name } => handle_internal_sysd_stop(name).await,
     }
 }
 
@@ -312,7 +314,7 @@ pub async fn ensure_daemon_running() -> Result<()> {
 // General commands
 // ---------------------------------------------------------------------------
 
-async fn handle_run(systemd: bool, name: Option<String>, command: Vec<String>) -> Result<()> {
+async fn handle_run(sysd: bool, name: Option<String>, command: Vec<String>) -> Result<()> {
     ensure_daemon_running().await?;
     let rpc = connect().await?;
 
@@ -322,14 +324,14 @@ async fn handle_run(systemd: bool, name: Option<String>, command: Vec<String>) -
     // The daemon has its own working directory, so send ours explicitly.
     let working_dir = std::env::current_dir()?.to_string_lossy().into_owned();
 
-    let kind = if systemd {
+    let kind = if sysd {
         "systemd service"
     } else {
         "session"
     };
     info!("Starting {kind} '{name}' running: {command}");
 
-    if systemd {
+    if sysd {
         rpc.create_sysd_session(working_dir, Some(command), Some(name.clone()))
             .await?;
 
@@ -612,7 +614,7 @@ fn handle_daemon_status() -> ! {
 // ---------------------------------------------------------------------------
 
 /// Starts a systemd-managed session from a config file.
-async fn handle_internal_systemd_start(file_path: PathBuf) -> Result<()> {
+async fn handle_internal_sysd_start(file_path: PathBuf) -> Result<()> {
     let absolute_path = fs::canonicalize(&file_path).map_err(|e| {
         eyre!(
             "Failed to get absolute path for config file {}: {}",
@@ -631,12 +633,12 @@ async fn handle_internal_systemd_start(file_path: PathBuf) -> Result<()> {
     ensure_daemon_running().await?;
     let rpc = connect().await?;
 
-    info!("Starting systemd session from {}", absolute_path.display());
+    info!("Starting sysd session from {}", absolute_path.display());
 
     let yaml_name = session_name_from_config(&absolute_path)?;
     let run = rpc.start_sysd_session_from_file(absolute_path).await?;
 
-    info!("Systemd session '{yaml_name}' started, waiting for it to end");
+    info!("Sysd session '{yaml_name}' started, waiting for it to end");
 
     // Stay alive for as long as the session runs: this process is the unit's main process.
     // Exiting with an error makes systemd (Restart=on-failure) restart the unit.
@@ -663,7 +665,7 @@ async fn handle_internal_systemd_start(file_path: PathBuf) -> Result<()> {
                 ));
             }
             SysdWaitStatus::Ended => {
-                info!("Systemd session '{yaml_name}' ended");
+                info!("Sysd session '{yaml_name}' ended");
                 return Ok(());
             }
         }
@@ -672,15 +674,15 @@ async fn handle_internal_systemd_start(file_path: PathBuf) -> Result<()> {
 
 /// The session name as the daemon stores it (the unit name, lowercased).
 pub fn session_name_from_config(path: &std::path::Path) -> Result<String> {
-    let yaml: crate::backend::yaml::models::YamlSession =
+    let yaml: crate::backend::storage::session_files::SessionConfig =
         serde_yaml::from_str(&fs::read_to_string(path)?)?;
-    Ok(crate::backend::session_manager::UnitName::new(&yaml.name)?.into_string())
+    Ok(crate::backend::sysd::UnitName::new(&yaml.name)?.into_string())
 }
 
 /// Stops a systemd-managed session. Does not start the daemon.
 /// A missing daemon or session is not an error: there is nothing left to stop,
 /// and failing here would leave the unit in the `failed` state.
-async fn handle_internal_systemd_stop(name: String) -> Result<()> {
+async fn handle_internal_sysd_stop(name: String) -> Result<()> {
     if !daemon_running() {
         info!("Daemon not running, nothing to stop for '{name}'");
         return Ok(());
@@ -692,11 +694,11 @@ async fn handle_internal_systemd_stop(name: String) -> Result<()> {
         return Ok(());
     };
 
-    info!("Stopping systemd session '{name}'");
+    info!("Stopping sysd session '{name}'");
 
     rpc.stop_sysd_session(id).await?;
 
-    info!("Systemd session '{name}' stopped");
+    info!("Sysd session '{name}' stopped");
 
     Ok(())
 }

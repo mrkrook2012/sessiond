@@ -37,33 +37,41 @@ fn no_subcommand_starts_the_tui() {
 
 #[test]
 fn run_takes_the_rest_of_the_line_as_the_command() {
-    let Commands::Run { systemd, name, command } = command(&["run", "-n", "x", "ls", "-la", "--color"])
+    let Commands::Run { sysd, name, command } = command(&["run", "-n", "x", "ls", "-la", "--color"])
     else {
         panic!("not run");
     };
-    assert!(!systemd);
+    assert!(!sysd);
     assert_eq!(name.as_deref(), Some("x"));
     assert_eq!(command, vec!["ls", "-la", "--color"]);
 }
 
 #[test]
 fn run_flags_after_the_command_belong_to_the_command() {
-    let Commands::Run { systemd, name, command } = command(&["run", "echo", "--systemd", "-n", "y"])
+    let Commands::Run { sysd, name, command } = command(&["run", "echo", "--sysd", "-n", "y"])
     else {
         panic!("not run");
     };
-    assert!(!systemd);
+    assert!(!sysd);
     assert_eq!(name, None);
-    assert_eq!(command, vec!["echo", "--systemd", "-n", "y"]);
+    assert_eq!(command, vec!["echo", "--sysd", "-n", "y"]);
 }
 
 #[test]
-fn run_systemd_flag() {
-    let Commands::Run { systemd, .. } = command(&["run", "--systemd", "--name", "svc", "sleep", "1"])
+fn run_sysd_flag() {
+    let Commands::Run { sysd, .. } = command(&["run", "--sysd", "--name", "svc", "sleep", "1"])
     else {
         panic!("not run");
     };
-    assert!(systemd);
+    assert!(sysd);
+}
+
+#[test]
+fn run_accepts_old_systemd_flag() {
+    let Commands::Run { sysd, .. } = command(&["run", "--systemd", "sleep", "1"]) else {
+        panic!("not run");
+    };
+    assert!(sysd);
 }
 
 #[test]
@@ -133,16 +141,29 @@ fn export_and_import_arguments() {
 #[test]
 fn hidden_internal_commands_parse_but_are_not_in_help() {
     assert!(matches!(
-        command(&["__internal-systemd-start", "/x.yaml"]),
-        Commands::InternalSystemdStart { config } if config.as_os_str() == "/x.yaml"
+        command(&["__internal-sysd-start", "/x.yaml"]),
+        Commands::InternalSysdStart { config } if config.as_os_str() == "/x.yaml"
     ));
     assert!(matches!(
-        command(&["__internal-systemd-stop", "svc"]),
-        Commands::InternalSystemdStop { name } if name == "svc"
+        command(&["__internal-sysd-stop", "svc"]),
+        Commands::InternalSysdStop { name } if name == "svc"
     ));
 
     let help = Cli::command().render_help().to_string();
     assert!(!help.contains("__internal"), "help shows internal commands:\n{help}");
+}
+
+#[test]
+fn old_systemd_internal_command_names_still_parse() {
+    // Unit files written before the rename still call these.
+    assert!(matches!(
+        command(&["__internal-systemd-start", "/x.yaml"]),
+        Commands::InternalSysdStart { config } if config.as_os_str() == "/x.yaml"
+    ));
+    assert!(matches!(
+        command(&["__internal-systemd-stop", "svc"]),
+        Commands::InternalSysdStop { name } if name == "svc"
+    ));
 }
 
 #[test]
