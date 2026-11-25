@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use daemon_test::backend::daemon::Daemon;
 use daemon_test::backend::client_view::ClientView;
 use daemon_test::backend::session::Sessions;
-use daemon_test::backend::systemd::UnitName;
+use daemon_test::backend::sysd::UnitName;
 use daemon_test::backend::terminal::Terminals;
 use daemon_test::backend::terminal::virtual_terminal::TerminalEvent;
 use daemon_test::backend::window::Windows;

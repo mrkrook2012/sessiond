@@ -9,7 +9,7 @@ use tempfile::TempDir;
 pub struct Harness {
     pub dir: TempDir,
     /// When set, unit files go to a temp dir instead of ~/.config/systemd/user.
-    isolated_systemd: bool,
+    isolated_sysd: bool,
 }
 
 impl Harness {
@@ -18,16 +18,16 @@ impl Harness {
         fs::create_dir_all(dir.path().join("data")).unwrap();
         Self {
             dir,
-            isolated_systemd: false,
+            isolated_sysd: false,
         }
     }
 
     /// Like `new`, but unit files live in a temp dir. systemd won't see them,
     /// so only use this for tests that don't need systemctl to actually work.
-    pub fn with_isolated_systemd() -> Self {
+    pub fn with_isolated_sysd() -> Self {
         let mut h = Self::new();
-        fs::create_dir_all(h.systemd_dir()).unwrap();
-        h.isolated_systemd = true;
+        fs::create_dir_all(h.sysd_dir()).unwrap();
+        h.isolated_sysd = true;
         h
     }
 
@@ -40,8 +40,8 @@ impl Harness {
         self.dir.path().join("data")
     }
 
-    pub fn systemd_dir(&self) -> PathBuf {
-        self.dir.path().join("systemd")
+    pub fn sysd_dir(&self) -> PathBuf {
+        self.dir.path().join("sysd")
     }
 
     pub fn raw(&self, args: &[&str]) -> Output {
@@ -51,8 +51,8 @@ impl Harness {
             .env("DAEMON_TEST_LOG_DIR", self.dir.path())
             .env("DAEMON_TEST_DATA_DIR", self.data_dir());
 
-        if self.isolated_systemd {
-            cmd.env("DAEMON_TEST_SYSTEMD_DIR", self.systemd_dir());
+        if self.isolated_sysd {
+            cmd.env("DAEMON_TEST_SYSD_DIR", self.sysd_dir());
         }
 
         cmd.output().expect("Failed to execute command")
@@ -152,7 +152,7 @@ pub fn session_yaml(name: &str) -> String {
 
 /// True if a user systemd instance is reachable. CI runners usually have none,
 /// so tests that need real systemd skip themselves there.
-pub fn user_systemd_available() -> bool {
+pub fn user_sysd_available() -> bool {
     Command::new("systemctl")
         .args(["--user", "show-environment"])
         .output()

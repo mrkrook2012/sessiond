@@ -1,8 +1,8 @@
 use std::fs;
 use std::path::Path;
 
-use daemon_test::backend::systemd::UnitName;
-use daemon_test::backend::systemd::unit_file::{self, RestartPolicy};
+use daemon_test::backend::sysd::UnitName;
+use daemon_test::backend::sysd::unit_file::{self, RestartPolicy};
 use tempfile::TempDir;
 
 /// Writes a unit for `name` into a temp dir and returns (dir, unit file contents).
@@ -44,11 +44,11 @@ fn unit_runs_the_internal_commands_of_this_binary() {
 
     assert_eq!(
         value(&unit, "ExecStart"),
-        Some(format!("{exe} __internal-systemd-start \"/data/My Session.yaml\"").as_str())
+        Some(format!("{exe} __internal-sysd-start \"/data/My Session.yaml\"").as_str())
     );
     assert_eq!(
         value(&unit, "ExecStop"),
-        Some(format!("{exe} __internal-systemd-stop \"svc\"").as_str())
+        Some(format!("{exe} __internal-sysd-stop \"svc\"").as_str())
     );
     assert_eq!(value(&unit, "User"), Some("alice"));
     assert_eq!(value(&unit, "WorkingDirectory"), dir.path().to_str());

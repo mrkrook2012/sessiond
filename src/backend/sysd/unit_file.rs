@@ -6,16 +6,16 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
-use crate::backend::systemd::UnitName;
+use crate::backend::sysd::UnitName;
 use crate::ipc::consts::SOCKET_ENV_VAR;
 
 /// Overrides the directory unit files are written to / looked up in.
 /// Only meant for tests: systemd itself will not see units outside its search path.
-pub const SYSTEMD_DIR_ENV_VAR: &str = "DAEMON_TEST_SYSTEMD_DIR";
+pub const SYSD_DIR_ENV_VAR: &str = "DAEMON_TEST_SYSD_DIR";
 
-/// The user unit directory: `DAEMON_TEST_SYSTEMD_DIR` if set, otherwise `~/.config/systemd/user`.
+/// The user unit directory: `DAEMON_TEST_SYSD_DIR` if set, otherwise `~/.config/systemd/user`.
 pub fn dir() -> Result<PathBuf> {
-    if let Some(dir) = std::env::var_os(SYSTEMD_DIR_ENV_VAR) {
+    if let Some(dir) = std::env::var_os(SYSD_DIR_ENV_VAR) {
         return Ok(PathBuf::from(dir));
     }
     let home: String = std::env::var("HOME")?;
@@ -56,8 +56,8 @@ pub fn write_to(dir: &Path, yaml_path: &Path, user: &str, name: &UnitName) -> Re
         bail!("This binary was deleted or replaced while running ({bin_path}); restart the daemon");
     }
 
-    let start_command = format!("{bin_path} __internal-systemd-start {:?}", yaml_path);
-    let stop_command = format!("{bin_path} __internal-systemd-stop {:?}", name.as_str());
+    let start_command = format!("{bin_path} __internal-sysd-start {:?}", yaml_path);
+    let stop_command = format!("{bin_path} __internal-sysd-stop {:?}", name.as_str());
 
     let mut file_contents = render(user, dir, start_command, stop_command, RestartPolicy::OnFailure);
 

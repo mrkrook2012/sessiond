@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use daemon_test::backend::client_view::ClientView;
 use daemon_test::backend::session::Sessions;
-use daemon_test::backend::systemd::UnitName;
+use daemon_test::backend::sysd::UnitName;
 use daemon_test::backend::session_runtime::SessionRuntime;
 use daemon_test::backend::terminal::Terminals;
 use daemon_test::backend::terminal::virtual_terminal::TerminalEvent;

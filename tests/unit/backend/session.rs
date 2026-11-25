@@ -1,7 +1,7 @@
 use daemon_test::backend::session::{
     SessionKind, Sessions, SessionState,
 };
-use daemon_test::backend::systemd::UnitName;
+use daemon_test::backend::sysd::UnitName;
 use daemon_test::ids::{Guid, SessionId, WindowId};
 use daemon_test::ipc::protocol::SessionLookup;
 

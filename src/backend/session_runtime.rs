@@ -5,7 +5,7 @@ use crate::backend::session::{SessionKind, SessionState, Sessions};
 use crate::backend::terminal::Terminals;
 use crate::backend::window::Windows;
 use crate::backend::client_view::ClientView;
-use crate::backend::systemd::UnitName;
+use crate::backend::sysd::UnitName;
 use crate::backend::storage::session_files::{SessionConfig, WindowConfig};
 use crate::ids::{RunId, SessionId, TerminalId, WindowId};
 use crate::ipc::protocol::{SessionInfo, SessionLookup, SysdWaitStatus, TerminalUpdate};
@@ -374,7 +374,7 @@ impl SessionRuntime {
         true
     }
 
-    /// Where run `run` of sysd session `name` stands, for `__internal-systemd-start`.
+    /// Where run `run` of sysd session `name` stands, for `__internal-sysd-start`.
     pub fn sysd_wait_status(&self, name: &str, run: RunId) -> SysdWaitStatus {
         let Some(id) = self.sessions.id_by_name(name) else {
             return SysdWaitStatus::Ended;

@@ -5,7 +5,7 @@ use color_eyre::eyre::{Ok, OptionExt, Result, bail, eyre};
 use crate::{
     ids::{GuidGenerator, RunId, SessionId, WindowId},
     backend::name_match::similar_names,
-    backend::systemd::UnitName,
+    backend::sysd::UnitName,
     ipc::protocol::{SessionLookup, SysdData},
 };
 

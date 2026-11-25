@@ -1,5 +1,5 @@
-use daemon_test::backend::systemd::UnitName;
-use daemon_test::backend::systemd::client::{unescape_bus_label, unit_from_object_path};
+use daemon_test::backend::sysd::UnitName;
+use daemon_test::backend::sysd::client::{unescape_bus_label, unit_from_object_path};
 
 const PREFIX: &str = "/org/freedesktop/systemd1/unit/";
 

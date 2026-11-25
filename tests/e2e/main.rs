@@ -10,4 +10,4 @@ mod daemon;
 mod export_import;
 mod logging;
 mod sessions;
-mod systemd;
+mod sysd;

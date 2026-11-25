@@ -14,7 +14,7 @@ use crate::backend::session::validate_session_name;
 ///
 /// This only guarantees the name is safe to use in file names and unit files. Whether
 /// systemd accepts it, and whether a unit by that name already exists, only systemd can
-/// say: see `SystemdClient::ensure_unit_name_free`, which is asked before a service is made.
+/// say: see `SysdClient::ensure_unit_name_free`, which is asked before a service is made.
 #[derive(Debug, Clone, Eq, Hash, PartialEq, Encode, Decode)]
 pub struct UnitName(String);
 

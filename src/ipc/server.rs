@@ -12,8 +12,8 @@ use tokio::sync::Mutex;
 
 use crate::backend::{
     daemon::Daemon,
-    systemd::UnitName,
-    systemd::client::SystemdClient,
+    sysd::UnitName,
+    sysd::client::SysdClient,
 };
 use crate::ids::{RunId, SessionId, TerminalId, WindowId};
 use crate::ipc::{
@@ -29,16 +29,16 @@ const MAX_WAIT_MS: u64 = 60_000;
 pub struct DaemonRpcServer {
     daemon: Arc<Mutex<Daemon>>,
     /// `None` when the session bus / user systemd is not reachable (e.g. in CI).
-    systemd: Option<SystemdClient>,
+    sysd: Option<SysdClient>,
 }
 
 impl DaemonRpcServer {
-    pub fn new(daemon: Arc<Mutex<Daemon>>, systemd: Option<SystemdClient>) -> Self {
-        Self { daemon, systemd }
+    pub fn new(daemon: Arc<Mutex<Daemon>>, sysd: Option<SysdClient>) -> Self {
+        Self { daemon, sysd }
     }
 
-    fn systemd(&self) -> Result<&SystemdClient, String> {
-        self.systemd
+    fn sysd(&self) -> Result<&SysdClient, String> {
+        self.sysd
             .as_ref()
             .ok_or_else(|| "systemd is not available".to_string())
     }
@@ -47,8 +47,8 @@ impl DaemonRpcServer {
     /// write a unit file that replaces or shadows someone else's. Without systemd there is
     /// nothing to collide with, so the check is skipped.
     async fn ensure_unit_name_free(&self, unit: &UnitName) -> Result<(), String> {
-        match &self.systemd {
-            Some(systemd) => systemd
+        match &self.sysd {
+            Some(sysd) => sysd
                 .ensure_unit_name_free(unit)
                 .await
                 .map_err(|e| format!("{e:#}")),
@@ -57,10 +57,10 @@ impl DaemonRpcServer {
     }
 
     /// `daemon-reload` after unit files changed. Not fatal: the file is already written.
-    async fn reload_systemd(&self) {
-        match &self.systemd {
-            Some(systemd) => {
-                if let Err(e) = systemd.reload().await {
+    async fn reload_sysd(&self) {
+        match &self.sysd {
+            Some(sysd) => {
+                if let Err(e) = sysd.reload().await {
                     error!("{e:#}");
                 }
             }
@@ -133,7 +133,7 @@ impl DaemonService for DaemonRpcServer {
             .await
             .handle_create_sysd_session(working_dir, command, name)
             .map_err(|e| format!("{e:#}"))?;
-        self.reload_systemd().await;
+        self.reload_sysd().await;
         Ok(sessions)
     }
 
@@ -217,7 +217,7 @@ impl DaemonService for DaemonRpcServer {
             .await
             .handle_export_session(id)
             .map_err(|e| e.to_string())?;
-        self.reload_systemd().await;
+        self.reload_sysd().await;
         Ok(())
     }
 
@@ -261,14 +261,14 @@ impl DaemonService for DaemonRpcServer {
             .await
             .sysd_unit(id)
             .map_err(|e| e.to_string())?;
-        let systemd = self.systemd()?;
+        let sysd = self.sysd()?;
 
         let result = match sysd_action {
-            SysdAction::Start => systemd.start(&unit).await,
-            SysdAction::Stop => systemd.stop(&unit).await,
-            SysdAction::Restart => systemd.restart(&unit).await,
-            SysdAction::Enable => systemd.enable(&unit).await,
-            SysdAction::Disable => systemd.disable(&unit).await,
+            SysdAction::Start => sysd.start(&unit).await,
+            SysdAction::Stop => sysd.stop(&unit).await,
+            SysdAction::Restart => sysd.restart(&unit).await,
+            SysdAction::Enable => sysd.enable(&unit).await,
+            SysdAction::Disable => sysd.disable(&unit).await,
         };
         result.map_err(|e| {
             warn!(unit = %unit, ?sysd_action, "systemd action failed: {e:#}");
@@ -354,11 +354,11 @@ impl DaemonService for DaemonRpcServer {
 
         // Best effort: take the unit out of systemd before its file disappears.
         // Disable needs the unit file to still exist.
-        if let Some(systemd) = self.systemd.as_ref().filter(|_| has_unit_file) {
-            if let Err(e) = systemd.disable(&unit).await {
+        if let Some(sysd) = self.sysd.as_ref().filter(|_| has_unit_file) {
+            if let Err(e) = sysd.disable(&unit).await {
                 warn!("{e:#}");
             }
-            if let Err(e) = systemd.stop(&unit).await {
+            if let Err(e) = sysd.stop(&unit).await {
                 warn!("{e:#}");
             }
         }
@@ -371,7 +371,7 @@ impl DaemonService for DaemonRpcServer {
             .map_err(|e| e.to_string())?;
 
         if has_unit_file {
-            self.reload_systemd().await;
+            self.reload_sysd().await;
         }
         Ok(removed)
     }
@@ -380,9 +380,9 @@ impl DaemonService for DaemonRpcServer {
 
 pub async fn run_server(
     daemon: Arc<Mutex<Daemon>>,
-    systemd: Option<SystemdClient>,
+    sysd: Option<SysdClient>,
 ) -> Result<()> {
-    let server = DaemonRpcServer::new(daemon, systemd);
+    let server = DaemonRpcServer::new(daemon, sysd);
 
     let listener =
         tarpc::serde_transport::unix::listen(socket_path(), Bincode::default).await?;
@@ -405,7 +405,7 @@ pub async fn run_server(
         })
         .map(server::BaseChannel::with_defaults)
         .for_each(|channel| {
-            // Every connection gets its own task: clients like `__internal-systemd-start`
+            // Every connection gets its own task: clients like `__internal-sysd-start`
             // stay connected for as long as their session runs, so a fixed number of
             // concurrently served connections would lock everyone else out.
             let requests = channel.execute(server.clone().serve()).for_each(|request| async move {

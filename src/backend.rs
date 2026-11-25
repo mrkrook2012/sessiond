@@ -4,6 +4,6 @@ pub mod name_match;
 pub mod terminal;
 pub mod window;
 pub mod session;
-pub mod systemd;
+pub mod sysd;
 pub mod session_runtime;
 pub mod storage;

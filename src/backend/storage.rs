@@ -6,8 +6,8 @@ use tracing::{debug, info, warn};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
  
-use crate::backend::systemd::UnitName;
-use crate::backend::systemd::unit_file;
+use crate::backend::sysd::UnitName;
+use crate::backend::sysd::unit_file;
 use crate::backend::storage::session_files::{SessionConfig, SessionFiles};
 use color_eyre::eyre::Result;
  

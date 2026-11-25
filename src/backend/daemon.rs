@@ -8,7 +8,7 @@ use crate::backend::client_view::ClientView;
 use tokio::sync::{Mutex, watch};
 
 use crate::backend::session::Sessions;
-use crate::backend::systemd::UnitName;
+use crate::backend::sysd::UnitName;
 use crate::backend::session_runtime::SessionRuntime;
 use crate::backend::storage::SessionStore;
 use crate::backend::terminal::Terminals;
@@ -16,7 +16,7 @@ use crate::backend::terminal::virtual_terminal::TerminalEvent;
 use crate::backend::window::Windows;
 use crate::ids::{RunId, SessionId, TerminalId, WindowId};
 use crate::backend::storage::session_files::{SessionFiles, SessionConfig, WindowConfig};
-use crate::backend::systemd::client::{SystemdClient, watch_events};
+use crate::backend::sysd::client::{SysdClient, watch_events};
 use crate::ipc::consts::socket_path;
 use crate::ipc::server::run_server;
 use crate::ipc::protocol::{SessionInfo, SessionLookup, SysdWaitStatus, TerminalUpdate};
@@ -62,7 +62,7 @@ pub async fn run() -> Result<()> {
     });
 
     // Without a session bus (CI, containers) the daemon still works; sysd actions just fail.
-    let systemd = match SystemdClient::connect().await {
+    let sysd = match SysdClient::connect().await {
         Ok(client) => {
             let watcher_client = client.clone();
             let watcher_daemon = daemon.clone();
@@ -79,7 +79,7 @@ pub async fn run() -> Result<()> {
         }
     };
 
-    run_server(daemon, systemd).await?;
+    run_server(daemon, sysd).await?;
 
     Ok(())
 }
@@ -259,7 +259,7 @@ impl Daemon {
     }
 
     /// Starts (or restarts) a sysd session from its YAML. Returns the id of this run,
-    /// which `__internal-systemd-start` then waits on.
+    /// which `__internal-sysd-start` then waits on.
     pub fn handle_start_sysd_session_from_file(&mut self, file_path: PathBuf) -> Result<RunId> {
         let yaml = self.store.load(&file_path)?;
         let name = UnitName::new(&yaml.name)?;
@@ -303,7 +303,7 @@ impl Daemon {
 
     /// The unit a new service called `name` would get, checked against everything the
     /// daemon knows: the name is valid and no session uses it. Whether systemd already has
-    /// a unit by that name is asked separately (`SystemdClient::ensure_unit_name_free`),
+    /// a unit by that name is asked separately (`SysdClient::ensure_unit_name_free`),
     /// because that is a D-Bus call and must not be made while holding the daemon lock.
     pub fn new_service_unit(&self, name: Option<&str>) -> Result<UnitName> {
         let Some(name) = name else {
@@ -434,7 +434,7 @@ impl Daemon {
 
     /// Stops the daemon and every process it started.
     ///
-    /// The socket file goes first: a waiting `__internal-systemd-start` that loses its
+    /// The socket file goes first: a waiting `__internal-sysd-start` that loses its
     /// connection checks for it to tell this requested shutdown from a crash (and only
     /// fails, making systemd restart it, on a crash). Holding the daemon lock throughout
     /// also keeps tracked commands that die below from being reported as exits.
