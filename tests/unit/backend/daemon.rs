@@ -4,16 +4,16 @@
 use std::fs;
 use std::path::PathBuf;
 
-use daemon_test::backend::daemon::Daemon;
-use daemon_test::backend::client_view::ClientView;
-use daemon_test::backend::session::Sessions;
-use daemon_test::backend::sysd::UnitName;
-use daemon_test::backend::terminal::Terminals;
-use daemon_test::backend::terminal::virtual_terminal::TerminalEvent;
-use daemon_test::backend::window::Windows;
-use daemon_test::backend::storage::session_files::SessionFiles;
-use daemon_test::ipc::protocol::{SessionInfo, SysdWaitStatus};
-use daemon_test::ids::{Guid, RunId, SessionId};
+use sessiond::backend::daemon::Daemon;
+use sessiond::backend::client_view::ClientView;
+use sessiond::backend::session::Sessions;
+use sessiond::backend::sysd::UnitName;
+use sessiond::backend::terminal::Terminals;
+use sessiond::backend::terminal::virtual_terminal::TerminalEvent;
+use sessiond::backend::window::Windows;
+use sessiond::backend::storage::session_files::SessionFiles;
+use sessiond::ipc::protocol::{SessionInfo, SysdWaitStatus};
+use sessiond::ids::{Guid, RunId, SessionId};
 use tempfile::TempDir;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 

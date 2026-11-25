@@ -12,7 +12,7 @@ fn logging_is_quiet_by_default_and_verbose_with_a_flag() {
     assert!(out.status.success());
     assert_eq!(String::from_utf8_lossy(&out.stderr), "", "default run should not log");
     h.ok(&["daemon", "stop"]);
-    let daemon_log = fs::read_to_string(h.dir.path().join("daemon.err")).unwrap();
+    let daemon_log = fs::read_to_string(h.dir.path().join("daemon.log")).unwrap();
     assert!(!daemon_log.contains("INFO"), "daemon logged at info by default:\n{daemon_log}");
 
     // -vv: the CLI logs, and the daemon it starts inherits the level.
@@ -21,6 +21,6 @@ fn logging_is_quiet_by_default_and_verbose_with_a_flag() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("INFO"));
     h.ok(&["kill", "loud"]);
     h.ok(&["daemon", "stop"]);
-    let daemon_log = fs::read_to_string(h.dir.path().join("daemon.err")).unwrap();
+    let daemon_log = fs::read_to_string(h.dir.path().join("daemon.log")).unwrap();
     assert!(daemon_log.contains("DEBUG"), "daemon did not inherit -vv:\n{daemon_log}");
 }

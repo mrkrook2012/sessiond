@@ -653,7 +653,7 @@ pub async fn run_frontend() -> Result<()> {
                             Screen::Terminal => draw_terminal_screen(frame, area, &st),
                         }
                     })
-                    .inspect_err(|e| eprintln!("terminal draw failed: {e}"))
+                    .inspect_err(|e| tracing::error!("terminal draw failed: {e}"))
                     .ok();
             }
 

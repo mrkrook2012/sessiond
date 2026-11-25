@@ -3,14 +3,14 @@
 use std::fs;
 
 use clap::{CommandFactory, Parser, error::ErrorKind};
-use daemon_test::cli::{
+use sessiond::cli::{
     Cli, Commands, DaemonCommands, ServiceCommands, command_line, generate_random_name, session_name_from_config, session_not_found_message,
     shell_join, shell_quote,
 };
 use tracing::level_filters::LevelFilter;
 
 fn parse(args: &[&str]) -> Result<Cli, ErrorKind> {
-    Cli::try_parse_from(std::iter::once("daemon_test").chain(args.iter().copied()))
+    Cli::try_parse_from(std::iter::once("sessiond").chain(args.iter().copied()))
         .map_err(|e| e.kind())
 }
 
@@ -262,7 +262,7 @@ fn session_name_from_config_is_the_lowercased_unit_name() {
 #[test]
 fn session_not_found_points_to_list_without_suggestions() {
     let message = session_not_found_message("zzz", &[]);
-    assert_eq!(message, "Session not found: 'zzz'\nRun `daemon_test list` to see all sessions.");
+    assert_eq!(message, "Session not found: 'zzz'\nRun `sessiond list` to see all sessions.");
 }
 
 #[test]

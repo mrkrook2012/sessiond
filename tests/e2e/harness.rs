@@ -45,21 +45,21 @@ impl Harness {
     }
 
     pub fn raw(&self, args: &[&str]) -> Output {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_daemon_test"));
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_sessiond"));
         cmd.args(args)
-            .env("DAEMON_TEST_SOCKET", self.socket())
-            .env("DAEMON_TEST_LOG_DIR", self.dir.path())
-            .env("DAEMON_TEST_DATA_DIR", self.data_dir());
+            .env("SESSIOND_SOCKET", self.socket())
+            .env("SESSIOND_LOG_DIR", self.dir.path())
+            .env("SESSIOND_DATA_DIR", self.data_dir());
 
         if self.isolated_sysd {
-            cmd.env("DAEMON_TEST_SYSD_DIR", self.sysd_dir());
+            cmd.env("SESSIOND_SYSD_DIR", self.sysd_dir());
         }
 
         cmd.output().expect("Failed to execute command")
     }
 
     pub fn assert_daemon_healthy(&self, step: &str) {
-        let err = fs::read_to_string(self.dir.path().join("daemon.err")).unwrap_or_default();
+        let err = fs::read_to_string(self.dir.path().join("daemon.log")).unwrap_or_default();
 
         assert!(
             !err.contains("panicked"),
@@ -133,7 +133,7 @@ impl Drop for Harness {
     fn drop(&mut self) {
         eprintln!("Test daemon logs:");
 
-        for file in ["daemon.out", "daemon.err"] {
+        for file in ["daemon.log"] {
             let path = self.dir.path().join(file);
 
             if let Ok(contents) = fs::read_to_string(path) {

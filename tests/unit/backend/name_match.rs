@@ -1,4 +1,4 @@
-use daemon_test::backend::name_match::{MAX_SUGGESTIONS, edit_distance, similar_names};
+use sessiond::backend::name_match::{MAX_SUGGESTIONS, edit_distance, similar_names};
 
 const NAMES: [&str; 5] = ["webserver", "web-proxy", "database", "backup", "minecraft"];
 

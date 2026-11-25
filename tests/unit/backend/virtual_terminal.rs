@@ -1,8 +1,8 @@
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use daemon_test::backend::terminal::virtual_terminal::{TERMINATE_GRACE, TerminalEvent, VirtualTerminal};
-use daemon_test::ids::{Guid, TerminalId};
+use sessiond::backend::terminal::virtual_terminal::{TERMINATE_GRACE, TerminalEvent, VirtualTerminal};
+use sessiond::ids::{Guid, TerminalId};
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use crate::support::{eventually, screen_text};

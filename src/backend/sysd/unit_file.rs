@@ -11,9 +11,9 @@ use crate::ipc::consts::SOCKET_ENV_VAR;
 
 /// Overrides the directory unit files are written to / looked up in.
 /// Only meant for tests: systemd itself will not see units outside its search path.
-pub const SYSD_DIR_ENV_VAR: &str = "DAEMON_TEST_SYSD_DIR";
+pub const SYSD_DIR_ENV_VAR: &str = "SESSIOND_SYSD_DIR";
 
-/// The user unit directory: `DAEMON_TEST_SYSD_DIR` if set, otherwise `~/.config/systemd/user`.
+/// The user unit directory: `SESSIOND_SYSD_DIR` if set, otherwise `~/.config/systemd/user`.
 pub fn dir() -> Result<PathBuf> {
     if let Some(dir) = std::env::var_os(SYSD_DIR_ENV_VAR) {
         return Ok(PathBuf::from(dir));
@@ -81,7 +81,7 @@ fn render(
     restart: RestartPolicy,
 ) -> String {
     "[Unit]
-    Description=A daemon_test managed systemd service
+    Description=A sessiond managed systemd service
     After=network.target
 
     [Service]

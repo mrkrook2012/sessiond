@@ -5,7 +5,7 @@ use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};
 
 /// Overrides the directory session YAML files are stored in (used by tests).
-pub const DATA_DIR_ENV_VAR: &str = "DAEMON_TEST_DATA_DIR";
+pub const DATA_DIR_ENV_VAR: &str = "SESSIOND_DATA_DIR";
 
 /// The directory session config files (`<name>.yaml`) are stored in.
 pub struct SessionFiles {
@@ -16,7 +16,7 @@ impl SessionFiles {
     pub fn new() -> Result<Self> {
         let storage_dir = match std::env::var_os(DATA_DIR_ENV_VAR) {
             Some(dir) => PathBuf::from(dir),
-            None => PathBuf::from(std::env::var("HOME")?).join(".local/share/daemon_test"),
+            None => PathBuf::from(std::env::var("HOME")?).join(".local/share/sessiond"),
         };
 
         Self::with_dir(storage_dir)

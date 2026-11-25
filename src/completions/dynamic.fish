@@ -3,11 +3,11 @@
 # Hand-written part: things clap cannot know about.
 # ---------------------------------------------------------------------------
 
-# True when the non-option words after `daemon_test` are exactly $argv, i.e. the
+# True when the non-option words after `sessiond` are exactly $argv, i.e. the
 # cursor is at the first positional argument of that (sub)command.
-# Example: `__daemon_test_at_positional service start` matches `daemon_test service start <TAB>`
-# but not `daemon_test service start foo <TAB>`.
-function __daemon_test_at_positional
+# Example: `__sessiond_at_positional service start` matches `sessiond service start <TAB>`
+# but not `sessiond service start foo <TAB>`.
+function __sessiond_at_positional
     set -l tokens (commandline -opc)
     set -e tokens[1]
 
@@ -33,25 +33,25 @@ end
 
 # Session names from the running daemon. Prints nothing if the daemon is not running,
 # so completion never starts the daemon. Extra arguments go to `list`.
-function __daemon_test_sessions
-    command daemon_test list --names $argv 2>/dev/null
+function __sessiond_sessions
+    command sessiond list --names $argv 2>/dev/null
 end
 
 # None of these take files (`export --dir` brings its own directory completion).
-complete -c daemon_test -n "__fish_daemon_test_using_subcommand attach kill export service list daemon completions" -f
+complete -c sessiond -n "__fish_sessiond_using_subcommand attach kill export service list daemon completions" -f
 
 # Commands that take any session.
 for cmd in attach kill export
-    complete -c daemon_test -n "__daemon_test_at_positional $cmd" -f -a "(__daemon_test_sessions)"
+    complete -c sessiond -n "__sessiond_at_positional $cmd" -f -a "(__sessiond_sessions)"
 end
 
 # Commands that take a systemd session.
 for action in start stop restart enable disable update delete
-    complete -c daemon_test -n "__daemon_test_at_positional service $action" -f -a "(__daemon_test_sessions --services)"
+    complete -c sessiond -n "__sessiond_at_positional service $action" -f -a "(__sessiond_sessions --services)"
 end
 
 # `run [options] <command> [args...]`: complete the wrapped command like `sudo` does.
-# Skips `daemon_test` and `run`, and the value of -n/--name.
-complete -c daemon_test -n "__fish_daemon_test_using_subcommand run" -f -a "(__fish_complete_subcommand --fcs-skip=2 -n --name)"
+# Skips `sessiond` and `run`, and the value of -n/--name.
+complete -c sessiond -n "__fish_sessiond_using_subcommand run" -f -a "(__fish_complete_subcommand --fcs-skip=2 -n --name)"
 
-complete -c daemon_test -n "__daemon_test_at_positional completions" -f -a "fish" -d "fish shell"
+complete -c sessiond -n "__sessiond_at_positional completions" -f -a "fish" -d "fish shell"

@@ -1,9 +1,9 @@
-use daemon_test::backend::session::{
+use sessiond::backend::session::{
     SessionKind, Sessions, SessionState,
 };
-use daemon_test::backend::sysd::UnitName;
-use daemon_test::ids::{Guid, SessionId, WindowId};
-use daemon_test::ipc::protocol::SessionLookup;
+use sessiond::backend::sysd::UnitName;
+use sessiond::ids::{Guid, SessionId, WindowId};
+use sessiond::ipc::protocol::SessionLookup;
 
 fn unit(name: &str) -> UnitName {
     UnitName::new(name).unwrap()

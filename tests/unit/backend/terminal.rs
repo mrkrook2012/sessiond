@@ -1,5 +1,5 @@
-use daemon_test::backend::terminal::Terminals;
-use daemon_test::ids::{Guid, TerminalId};
+use sessiond::backend::terminal::Terminals;
+use sessiond::ids::{Guid, TerminalId};
 use tokio::sync::mpsc::unbounded_channel;
 
 use crate::support::{eventually, screen_text};

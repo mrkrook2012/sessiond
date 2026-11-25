@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use daemon_test::ids::{Guid, GuidGenerator};
+use sessiond::ids::{Guid, GuidGenerator};
 
 #[test]
 fn generated_guids_are_unique() {

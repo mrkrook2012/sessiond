@@ -2,8 +2,8 @@ use clap::Parser;
 use color_eyre::Result;
 use std::fs;
 
-use daemon_test::ipc::consts::socket_path;
-use daemon_test::{backend, cli, frontend, logging};
+use sessiond::ipc::consts::socket_path;
+use sessiond::{backend, cli, frontend, logging};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -29,12 +29,15 @@ async fn main() -> Result<()> {
             cli::dispatch(command).await?;
         }
         None => {
-            // The TUI owns the terminal, so this process does not log to stderr.
-            // The daemon it starts still gets the requested log level.
-            let _ = logging::LEVEL_FOR_CHILDREN.set(cli.verbose.tracing_level_filter());
+            // The TUI owns the terminal, so it logs to a file instead of stderr.
+            // The daemon it starts gets the same log level.
+            let log_path = logging::init_file(cli.verbose.tracing_level_filter(), logging::FRONTEND_LOG)?;
 
             cli::ensure_daemon_running().await?;
-            frontend::app::run_frontend().await?;
+            if let Err(e) = frontend::app::run_frontend().await {
+                tracing::error!("Frontend failed: {e:#}");
+                return Err(e.wrap_err(format!("See {}", log_path.display())));
+            }
         }
     }
 

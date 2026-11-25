@@ -3,7 +3,7 @@ use color_eyre::Result;
 use color_eyre::eyre::eyre;
 use tracing::info;
 
-use std::fs::{self, File};
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -13,15 +13,12 @@ use crate::ipc::client::DaemonClient;
 use crate::ipc::consts::socket_path;
 use crate::ipc::protocol::{SessionInfo, SessionLookup, SysdAction, SysdWaitStatus};
 
-/// Directory for daemon.out / daemon.err.
-const LOG_DIR_ENV_VAR: &str = "DAEMON_TEST_LOG_DIR";
-
 // ---------------------------------------------------------------------------
 // CLI definition
 // ---------------------------------------------------------------------------
 
 #[derive(Parser)]
-#[command(name = "daemon_test")]
+#[command(name = "sessiond")]
 #[command(about = "A daemon and terminal manager")]
 pub struct Cli {
     #[command(subcommand)]
@@ -95,7 +92,7 @@ pub enum Commands {
     },
     /// Prints a shell completion script.
     ///
-    /// fish: daemon_test completions fish > ~/.config/fish/completions/daemon_test.fish
+    /// fish: sessiond completions fish > ~/.config/fish/completions/sessiond.fish
     Completions { shell: CompletionShell },
 
     // Internal commands, invoked by the generated systemd units. The `systemd` aliases keep
@@ -270,17 +267,14 @@ pub async fn ensure_daemon_running() -> Result<()> {
 
     info!("Daemon not running, starting it");
 
-    let log_dir = std::env::var_os(LOG_DIR_ENV_VAR)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    let stdout = File::create(log_dir.join("daemon.out"))?;
-    let stderr = File::create(log_dir.join("daemon.err"))?;
+    // stdout and stderr share one file, so panics land next to the log lines.
+    let (log_file, log_path) = crate::logging::open_log_file(crate::logging::DAEMON_LOG)?;
+    let stderr = log_file.try_clone()?;
 
     let mut child = Command::new(std::env::current_exe()?)
         .args(["daemon", "start"])
         .args(crate::logging::verbosity_args())
-        .stdout(stdout)
+        .stdout(log_file)
         .stderr(stderr)
         .spawn()
         .map_err(|e| eyre!("Error while starting daemon: {e}"))?;
@@ -295,7 +289,7 @@ pub async fn ensure_daemon_running() -> Result<()> {
         if let Some(status) = child.try_wait()? {
             return Err(eyre!(
                 "Daemon exited during startup ({status}). See {}",
-                log_dir.join("daemon.err").display()
+                log_path.display()
             ));
         }
 
@@ -534,7 +528,7 @@ async fn handle_import(file: PathBuf) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// Name the completions are registered for: the installed binary.
-const BIN_NAME: &str = "daemon_test";
+const BIN_NAME: &str = "sessiond";
 
 /// The generated script covers subcommands and flags; `FISH_DYNAMIC` adds what clap
 /// cannot know: live session names, and the command wrapped by `run`.

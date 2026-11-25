@@ -7,7 +7,7 @@ use std::process::Command;
 
 /// Runs fish's completion for `line` (as if TAB was pressed) with our script loaded.
 fn fish_complete(h: &Harness, script: &Path, line: &str) -> Vec<String> {
-    let bin_dir = Path::new(env!("CARGO_BIN_EXE_daemon_test")).parent().unwrap();
+    let bin_dir = Path::new(env!("CARGO_BIN_EXE_sessiond")).parent().unwrap();
     let path = format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap());
 
     let out = Command::new("fish")
@@ -18,8 +18,8 @@ fn fish_complete(h: &Harness, script: &Path, line: &str) -> Vec<String> {
             shell_quote(line)
         ))
         .env("PATH", path)
-        .env("DAEMON_TEST_SOCKET", h.socket())
-        .env("DAEMON_TEST_DATA_DIR", h.data_dir())
+        .env("SESSIOND_SOCKET", h.socket())
+        .env("SESSIOND_DATA_DIR", h.data_dir())
         .output()
         .expect("failed to run fish");
 
@@ -48,16 +48,16 @@ fn fish_completions() {
     }
     let h = Harness::with_isolated_sysd();
 
-    let script = h.dir.path().join("daemon_test.fish");
+    let script = h.dir.path().join("sessiond.fish");
     fs::write(&script, h.ok(&["completions", "fish"])).unwrap();
 
     // Static part: subcommands, without the hidden internal ones.
-    let top = fish_complete(&h, &script, "daemon_test ");
+    let top = fish_complete(&h, &script, "sessiond ");
     assert!(top.contains(&"service".to_string()), "got: {top:?}");
     assert!(!top.iter().any(|c| c.starts_with("__internal")), "got: {top:?}");
 
     // No daemon: no names, and completing must not start one.
-    assert!(fish_complete(&h, &script, "daemon_test attach ").is_empty());
+    assert!(fish_complete(&h, &script, "sessiond attach ").is_empty());
     h.fails(&["daemon", "status"]);
 
     // One ephemeral session and one (stopped) service.
@@ -69,18 +69,18 @@ fn fish_completions() {
     fs::write(h.sysd_dir().join("svc.service"), "[Unit]\n").unwrap();
     h.ok(&["run", "-n", "eph", "sleep", "300"]);
 
-    let mut attach = fish_complete(&h, &script, "daemon_test attach ");
+    let mut attach = fish_complete(&h, &script, "sessiond attach ");
     attach.sort();
     assert_eq!(attach, vec!["eph", "svc"]);
 
     assert_eq!(
-        fish_complete(&h, &script, "daemon_test service start "),
+        fish_complete(&h, &script, "sessiond service start "),
         vec!["svc"]
     );
 
     // Only one name: nothing (not even files) after it.
-    assert!(fish_complete(&h, &script, "daemon_test attach eph ").is_empty());
+    assert!(fish_complete(&h, &script, "sessiond attach eph ").is_empty());
 
     // `run` completes the wrapped command.
-    assert!(fish_complete(&h, &script, "daemon_test run -n x ech").contains(&"echo".to_string()));
+    assert!(fish_complete(&h, &script, "sessiond run -n x ech").contains(&"echo".to_string()));
 }

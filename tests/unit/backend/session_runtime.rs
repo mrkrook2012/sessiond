@@ -1,15 +1,15 @@
 use std::time::Duration;
 
-use daemon_test::backend::client_view::ClientView;
-use daemon_test::backend::session::Sessions;
-use daemon_test::backend::sysd::UnitName;
-use daemon_test::backend::session_runtime::SessionRuntime;
-use daemon_test::backend::terminal::Terminals;
-use daemon_test::backend::terminal::virtual_terminal::TerminalEvent;
-use daemon_test::backend::window::Windows;
-use daemon_test::backend::storage::session_files::WindowConfig;
-use daemon_test::ipc::protocol::{SessionInfo, SysdWaitStatus};
-use daemon_test::ids::{Guid, RunId, SessionId, TerminalId};
+use sessiond::backend::client_view::ClientView;
+use sessiond::backend::session::Sessions;
+use sessiond::backend::sysd::UnitName;
+use sessiond::backend::session_runtime::SessionRuntime;
+use sessiond::backend::terminal::Terminals;
+use sessiond::backend::terminal::virtual_terminal::TerminalEvent;
+use sessiond::backend::window::Windows;
+use sessiond::backend::storage::session_files::WindowConfig;
+use sessiond::ipc::protocol::{SessionInfo, SysdWaitStatus};
+use sessiond::ids::{Guid, RunId, SessionId, TerminalId};
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use crate::support::{eventually, screen_text};

@@ -500,32 +500,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "daemon_test"
-version = "0.1.0"
-dependencies = [
- "bincode-next",
- "clap",
- "clap-verbosity-flag",
- "clap_complete",
- "color-eyre",
- "futures",
- "libc",
- "mk_utils",
- "portable-pty",
- "rand 0.10.3",
- "ratatui",
- "serde",
- "serde_yaml",
- "tarpc",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "vt100",
- "zbus_systemd",
-]
-
-[[package]]
 name = "darling"
 version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1921,6 +1895,32 @@ dependencies = [
  "cfg-if",
  "libc",
  "windows-sys",
+]
+
+[[package]]
+name = "sessiond"
+version = "0.1.0"
+dependencies = [
+ "bincode-next",
+ "clap",
+ "clap-verbosity-flag",
+ "clap_complete",
+ "color-eyre",
+ "futures",
+ "libc",
+ "mk_utils",
+ "portable-pty",
+ "rand 0.10.3",
+ "ratatui",
+ "serde",
+ "serde_yaml",
+ "tarpc",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "vt100",
+ "zbus_systemd",
 ]
 
 [[package]]

@@ -1,5 +1,5 @@
-use daemon_test::backend::window::Windows;
-use daemon_test::ids::{Guid, TerminalId, WindowId};
+use sessiond::backend::window::Windows;
+use sessiond::ids::{Guid, TerminalId, WindowId};
 
 #[test]
 fn windows_map_to_their_terminals_both_ways() {

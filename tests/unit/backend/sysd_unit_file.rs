@@ -1,8 +1,8 @@
 use std::fs;
 use std::path::Path;
 
-use daemon_test::backend::sysd::UnitName;
-use daemon_test::backend::sysd::unit_file::{self, RestartPolicy};
+use sessiond::backend::sysd::UnitName;
+use sessiond::backend::sysd::unit_file::{self, RestartPolicy};
 use tempfile::TempDir;
 
 /// Writes a unit for `name` into a temp dir and returns (dir, unit file contents).

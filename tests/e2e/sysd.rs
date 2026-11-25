@@ -291,7 +291,7 @@ fn services_cannot_take_a_name_systemd_already_uses() {
     }
     // Isolated, so even if the check failed no unit file would reach systemd's search path.
     let h = Harness::with_isolated_sysd();
-    let name = format!("daemon-test-taken-{}", std::process::id());
+    let name = format!("sessiond-taken-{}", std::process::id());
     let unit = TransientUnit::start(&name);
 
     let err = h.fails(&["run", "--sysd", "--name", &name, "sleep", "1"]);

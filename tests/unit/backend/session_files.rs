@@ -1,7 +1,7 @@
 use std::fs;
 
-use daemon_test::backend::storage::session_files::{SessionConfig, WindowConfig};
-use daemon_test::backend::storage::session_files::SessionFiles;
+use sessiond::backend::storage::session_files::{SessionConfig, WindowConfig};
+use sessiond::backend::storage::session_files::SessionFiles;
 use tempfile::TempDir;
 
 fn files() -> (TempDir, SessionFiles) {
