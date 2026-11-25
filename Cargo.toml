@@ -2,6 +2,7 @@
 name = "daemon_test"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 
 [dependencies]
 libc = "0.2"
@@ -36,7 +37,6 @@ tempfile = "3"
 [package.metadata.deb]
 maintainer = "meindertkrook@gmail.com"
 copyright = "2026, Meindert"
-liscense = "MIT"
 extended-description = "Terminal / Systemd manager"
 depends = "$auto"
 section = "utils"
