@@ -76,7 +76,7 @@ impl Sessions {
         let session = Session {
             id,
             name,
-            kind: SessionKind::Ephemoral { windows },
+            kind: SessionKind::Ephemeral { windows },
         };
         self.sessions.insert(id, session);
         Ok(id)
@@ -121,7 +121,7 @@ impl Sessions {
             .values()
             .filter_map(|session| match &session.kind {
                 SessionKind::SysdBased(sysd) => Some(sysd.unit().clone()),
-                SessionKind::Ephemoral { .. } => None,
+                SessionKind::Ephemeral { .. } => None,
             })
             .collect()
     }
@@ -188,7 +188,7 @@ impl Sessions {
             .ok_or_eyre("Session not found")?;
 
         match &mut session.kind {
-            SessionKind::Ephemoral { .. } => {
+            SessionKind::Ephemeral { .. } => {
                 bail!("Tried to start a non sysd session")
             }
             SessionKind::SysdBased(sysd_session) => {
@@ -209,7 +209,7 @@ impl Sessions {
             .ok_or_eyre("Session not found")?;
 
         match &mut session.kind {
-            SessionKind::Ephemoral { .. } => {
+            SessionKind::Ephemeral { .. } => {
                 bail!("Tried to stop a non sysd session")
             }
             SessionKind::SysdBased(sysd_session) => {
@@ -264,7 +264,7 @@ pub struct Session {
 impl Session {
     pub fn windows(&self) -> Option<&Vec<WindowId>> {
         match &self.kind {
-            SessionKind::Ephemoral { windows } => Some(windows),
+            SessionKind::Ephemeral { windows } => Some(windows),
             SessionKind::SysdBased(session) => match &session.state {
                 SessionState::Running { windows, .. } => Some(windows),
                 SessionState::Stopped => None,
@@ -274,7 +274,7 @@ impl Session {
 
     pub fn windows_mut(&mut self) -> Option<&mut Vec<WindowId>> {
         match &mut self.kind {
-            SessionKind::Ephemoral { windows } => Some(windows),
+            SessionKind::Ephemeral { windows } => Some(windows),
             SessionKind::SysdBased(session) => match &mut session.state {
                 SessionState::Running { windows, .. } => Some(windows),
                 SessionState::Stopped => None,
@@ -283,7 +283,7 @@ impl Session {
     }
 }
 pub enum SessionKind {
-    Ephemoral { windows: Vec<WindowId> },
+    Ephemeral { windows: Vec<WindowId> },
     SysdBased(SysdSession),
 }
 pub struct SysdSession {

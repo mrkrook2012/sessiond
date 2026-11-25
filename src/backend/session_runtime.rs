@@ -305,7 +305,7 @@ impl SessionRuntime {
             .ok_or_eyre("Session not found")?;
 
         match &session.kind {
-            SessionKind::Ephemoral { .. } => {
+            SessionKind::Ephemeral { .. } => {
                 bail!("Cannot call sysd operation on non-sysd session")
             }
             SessionKind::SysdBased(sysd_session) => Ok(sysd_session.unit().clone()),
@@ -435,7 +435,7 @@ impl SessionRuntime {
         // A sysd session already says which windows are tracked: a window added later
         // (a monitor like btop) must not start restarting the service when it is quit.
         // Ephemeral sessions have no say yet, so everything that runs something is tracked.
-        let infer_tracking = matches!(session.kind, SessionKind::Ephemoral { .. });
+        let infer_tracking = matches!(session.kind, SessionKind::Ephemeral { .. });
 
         let windows = window_ids
             .iter()
@@ -481,7 +481,7 @@ impl SessionRuntime {
             .collect();
 
         let sysd_data = match &session.kind {
-            SessionKind::Ephemoral { .. } => None,
+            SessionKind::Ephemeral { .. } => None,
             SessionKind::SysdBased(sysd_session) => Some(sysd_session.sysd_data()),
         };
 

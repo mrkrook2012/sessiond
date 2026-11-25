@@ -12,7 +12,7 @@ fn unit(name: &str) -> UnitName {
 fn sysd_running(sessions: &Sessions, id: SessionId) -> bool {
     match &sessions.get(id).unwrap().kind {
         SessionKind::SysdBased(sysd) => sysd.is_running(),
-        SessionKind::Ephemoral { .. } => panic!("not a sysd session"),
+        SessionKind::Ephemeral { .. } => panic!("not a sysd session"),
     }
 }
 
