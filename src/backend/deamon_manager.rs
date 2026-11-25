@@ -235,6 +235,24 @@ impl DaemonManager {
         self.store.export_to_dir(&yaml, path)
     }
 
+    /// The unit a new service called `name` would get, checked against everything the
+    /// daemon knows: the name is valid and no session uses it. Whether systemd already has
+    /// a unit by that name is asked separately (`SystemdClient::ensure_unit_name_free`),
+    /// because that is a D-Bus call and must not be made while holding the manager lock.
+    pub fn new_service_unit(&self, name: Option<&str>) -> Result<UnitName> {
+        let Some(name) = name else {
+            bail!("A service needs a name");
+        };
+        let unit = UnitName::new(name)?;
+        self.runtime.check_new_session_name(unit.as_str())?;
+        Ok(unit)
+    }
+
+    /// The unit `handle_export_session` would create for session `id`.
+    pub fn export_unit(&self, id: SessionId) -> Result<UnitName> {
+        UnitName::new(self.runtime.session_name(id)?)
+    }
+
     /// Turns a running ephemeral session into a systemd-backed one.
     pub fn handle_export_session(&mut self, id: SessionId) -> Result<()> {
         let mut yaml = self.runtime.to_yaml(id)?;
@@ -264,11 +282,8 @@ impl DaemonManager {
         let Some(command) = command else {
             bail!("A service needs a command to run");
         };
-        let name = name.ok_or_else(|| color_eyre::eyre::eyre!("A service needs a name"))?;
-
         // Validate the name and check it is free before writing anything to disk.
-        let unit = UnitName::new(&name)?;
-        self.runtime.check_new_session_name(unit.as_str())?;
+        let unit = self.new_service_unit(name.as_deref())?;
 
         let yaml = YamlSession {
             name: unit.as_str().to_owned(),

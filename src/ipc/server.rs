@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 
 use crate::backend::{
     deamon_manager::DaemonManager,
-    session_manager::{RunId, SessionId},
+    session_manager::{RunId, SessionId, UnitName},
     systemd_client::SystemdClient,
     terminal_manager::TerminalId, window_manager::WindowId,
 };
@@ -41,6 +41,19 @@ impl DaemonRpcServer {
         self.systemd
             .as_ref()
             .ok_or_else(|| "systemd is not available".to_string())
+    }
+
+    /// Errors if systemd rejects `unit` as a name or already has a unit by it, so we never
+    /// write a unit file that replaces or shadows someone else's. Without systemd there is
+    /// nothing to collide with, so the check is skipped.
+    async fn ensure_unit_name_free(&self, unit: &UnitName) -> Result<(), String> {
+        match &self.systemd {
+            Some(systemd) => systemd
+                .ensure_unit_name_free(unit)
+                .await
+                .map_err(|e| format!("{e:#}")),
+            None => Ok(()),
+        }
     }
 
     /// `daemon-reload` after unit files changed. Not fatal: the file is already written.
@@ -104,6 +117,16 @@ impl DaemonService for DaemonRpcServer {
         command: Option<String>,
         name: Option<String>,
     ) -> Result<Vec<SessionInfo>, String> {
+        // The daemon's own checks first (cheap, and the clearer error), then systemd's,
+        // without the lock. Creating re-checks the daemon's side under the lock.
+        let unit = self
+            .manager
+            .lock()
+            .await
+            .new_service_unit(name.as_deref())
+            .map_err(|e| e.to_string())?;
+        self.ensure_unit_name_free(&unit).await?;
+
         let sessions = self
             .manager
             .lock()
@@ -181,6 +204,14 @@ impl DaemonService for DaemonRpcServer {
         _: context::Context,
         id: SessionId,
     ) -> Result<(), String> {
+        let unit = self
+            .manager
+            .lock()
+            .await
+            .export_unit(id)
+            .map_err(|e| e.to_string())?;
+        self.ensure_unit_name_free(&unit).await?;
+
         self.manager
             .lock()
             .await
@@ -353,7 +384,7 @@ pub async fn run_server(
 ) -> Result<()> {
     let server = DaemonRpcServer::new(manager, systemd);
 
-    let mut listener =
+    let listener =
         tarpc::serde_transport::unix::listen(socket_path(), Bincode::default).await?;
 
     info!("Daemon listening on {}", socket_path().display());

@@ -262,3 +262,43 @@ fn internal_stop_of_an_ephemeral_session_leaves_it_alone() {
     assert_eq!(h.sessions(), vec!["eph"]);
     h.ok(&["attach", "eph"]);
 }
+
+/// Stops a transient unit started with `systemd-run`, even if the test fails.
+struct TransientUnit(String);
+
+impl TransientUnit {
+    fn start(name: &str) -> Self {
+        let out = Command::new("systemd-run")
+            .args(["--user", "--quiet", "--unit", name, "sleep", "300"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "systemd-run failed: {}", String::from_utf8_lossy(&out.stderr));
+        Self(format!("{name}.service"))
+    }
+}
+
+impl Drop for TransientUnit {
+    fn drop(&mut self) {
+        let _ = Command::new("systemctl").args(["--user", "stop", &self.0]).output();
+    }
+}
+
+#[test]
+fn services_cannot_take_a_name_systemd_already_uses() {
+    if !user_systemd_available() {
+        eprintln!("skipping: no user systemd instance");
+        return;
+    }
+    // Isolated, so even if the check failed no unit file would reach systemd's search path.
+    let h = Harness::with_isolated_systemd();
+    let name = format!("daemon-test-taken-{}", std::process::id());
+    let unit = TransientUnit::start(&name);
+
+    let err = h.fails(&["run", "--systemd", "--name", &name, "sleep", "1"]);
+    assert!(err.contains("already has a unit"), "got: {err}");
+    assert!(h.sessions().is_empty());
+    assert!(!h.systemd_dir().join(format!("{name}.service")).exists());
+    assert!(!h.data_dir().join(format!("{name}.yaml")).exists());
+    drop(unit);
+    // Free names pass the check: see `systemd_round_trip`, which uses the real unit dir.
+}

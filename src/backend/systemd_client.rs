@@ -9,10 +9,10 @@
 use tracing::{debug, trace, warn};
 use std::sync::Arc;
 
-use color_eyre::eyre::{Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use futures::StreamExt;
 use tokio::sync::Mutex;
-use zbus_systemd::systemd1::ManagerProxy;
+use zbus_systemd::systemd1::{ManagerProxy, UnitProxy};
 use zbus_systemd::zbus::{self, Connection, MatchRule, MessageStream, fdo::PropertiesChanged};
 
 use crate::backend::deamon_manager::DaemonManager;
@@ -97,6 +97,42 @@ impl SystemdClient {
             .await
             .wrap_err("Failed to reload systemd")?;
         Ok(())
+    }
+
+    /// Asks systemd whether a new `<unit>.service` may be created under this name.
+    ///
+    /// Errors if systemd rejects the name, or already knows a unit by it: a unit file
+    /// anywhere in its search path (packaged ones like `/usr/lib/systemd/user/...`
+    /// included), a masked unit, or a running transient one. Writing our own unit file
+    /// over such a name would replace or shadow that unit.
+    ///
+    /// Uses `LoadUnit`, which validates the name with systemd's own rules and reports
+    /// `LoadState = not-found` when there is nothing by that name.
+    pub async fn ensure_unit_name_free(&self, unit: &UnitName) -> Result<()> {
+        let name = service_name(unit);
+        let path = self
+            .manager
+            .load_unit(name.clone())
+            .await
+            .wrap_err_with(|| format!("systemd does not accept the name {name}"))?;
+
+        let proxy = UnitProxy::new(self.manager.inner().connection(), path)
+            .await
+            .wrap_err("Failed to create systemd unit proxy")?;
+        let load_state = proxy
+            .load_state()
+            .await
+            .wrap_err_with(|| format!("Failed to get the load state of {name}"))?;
+        trace!(unit = %name, %load_state, "Checked unit name");
+
+        if load_state == "not-found" {
+            return Ok(());
+        }
+        let fragment = proxy.fragment_path().await.unwrap_or_default();
+        if fragment.is_empty() {
+            bail!("systemd already has a unit named {name} ({load_state})");
+        }
+        bail!("systemd already has a unit named {name} ({load_state}, from {fragment})");
     }
 
     /// True if the unit file state is `enabled` (or a variant like `enabled-runtime`).

@@ -19,11 +19,11 @@ todo:
   - Fish hints integration V
   - Clean up CLI V
   - Clean logging V
-  - Improve frontend to actualy differentiate between sysd and non sysd sessions
+  - Improve frontend to actualy differentiate between sysd and non sysd sessions V
   - Think of an actual name
   - Simple .deb release pipeline V
   - Multi user 
-  - Optimize screen transfer
+  - Optimize screen transfer V
   - Rewrite frontend
   - Improve error handling in the frontend. 
   - Improve startup robustness and error handling V

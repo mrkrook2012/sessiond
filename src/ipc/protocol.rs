@@ -1,5 +1,5 @@
 use bincode_next::{Decode, Encode};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::path::PathBuf;
 
 use crate::backend::{
