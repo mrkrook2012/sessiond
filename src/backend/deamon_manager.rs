@@ -73,12 +73,12 @@ impl DaemonManager {
 
     // ------------------------------------------------ pure runtime delegation
 
-    pub fn get_wanted_data(&self, terminal_id: TerminalId, scrollback: u32, since: u64) -> TerminalUpdate {
+    pub fn get_wanted_data(&self, terminal_id: TerminalId, scrollback: u32, since: u64) -> Result<TerminalUpdate> {
         self.runtime.get_terminal_data(terminal_id, scrollback, since)
     }
 
-    pub fn handle_write(&mut self, terminal_id: TerminalId, data: Vec<u8>) {
-        self.runtime.write(terminal_id, data);
+    pub fn handle_write(&mut self, terminal_id: TerminalId, data: Vec<u8>) -> Result<()> {
+        self.runtime.write(terminal_id, data)
     }
 
     pub fn handle_start(&mut self, rows: u16, cols: u16) {
@@ -89,8 +89,8 @@ impl DaemonManager {
         self.runtime.update_screen_size(rows, cols);
     }
 
-    pub fn handle_change_window(&mut self, window_id: WindowId) {
-        self.runtime.change_window(window_id);
+    pub fn handle_change_window(&mut self, window_id: WindowId) -> Result<()> {
+        self.runtime.change_window(window_id)
     }
 
     pub fn handle_exit_session(&mut self) -> Vec<SessionInfo> {
@@ -114,9 +114,8 @@ impl DaemonManager {
         self.runtime.all_session_info()
     }
 
-    pub fn handle_create_window(&mut self, id: SessionId) -> SessionInfo {
-        // Matches the previous behaviour (panics on a bad id).
-        self.runtime.create_window(id).unwrap()
+    pub fn handle_create_window(&mut self, id: SessionId) -> Result<SessionInfo> {
+        self.runtime.create_window(id)
     }
 
     pub fn handle_kill_window(
@@ -146,11 +145,11 @@ impl DaemonManager {
         working_dir: String,
         command: Option<String>,
         name: Option<String>,
-    ) -> Vec<SessionInfo> {
+    ) -> Result<Vec<SessionInfo>> {
         debug!(?name, ?command, "Creating session");
         self.runtime
-            .create_ephemeral_session(working_dir, command, name);
-        self.runtime.all_session_info()
+            .create_ephemeral_session(working_dir, command, name)?;
+        Ok(self.runtime.all_session_info())
     }
 
     pub fn handle_stop_sysd_session(&mut self, id: SessionId) -> Result<()> {
@@ -184,10 +183,11 @@ impl DaemonManager {
 
     pub fn handle_start_session_from_file(&mut self, file_path: PathBuf) -> Result<()> {
         let yaml = self.store.load(&file_path)?;
+        self.runtime.check_new_session_name(&yaml.name)?;
 
-        let windows = self.runtime.spawn_windows(yaml.windows, false);
+        let windows = self.runtime.spawn_windows(yaml.windows, false)?;
+        self.runtime.add_ephemeral_session(yaml.name.clone(), windows)?;
         info!(session = %yaml.name, "Started session from file");
-        self.runtime.add_ephemeral_session(yaml.name, windows);
 
         Ok(())
     }
@@ -198,8 +198,7 @@ impl DaemonManager {
         let yaml = self.store.load(&file_path)?;
         let name = UnitName::new(&yaml.name)?;
 
-        let windows = self.runtime.spawn_windows(yaml.windows, true);
-        let run = self.runtime.start_or_create_sysd_session(name.clone(), windows)?;
+        let run = self.runtime.start_or_create_sysd_session(name.clone(), yaml.windows)?;
         self.store.record_sysd_config(name.clone(), file_path);
         info!(session = %name, ?run, "Started sysd session");
         self.notify_changed();
@@ -238,10 +237,13 @@ impl DaemonManager {
 
     /// Turns a running ephemeral session into a systemd-backed one.
     pub fn handle_export_session(&mut self, id: SessionId) -> Result<()> {
-        let yaml = self.runtime.to_yaml(id)?;
+        let mut yaml = self.runtime.to_yaml(id)?;
 
         // Validate the name before doing anything destructive.
         let unit = UnitName::new(&yaml.name)?;
+        // The service is known by its unit name from now on; store it under that name too,
+        // so its YAML file is `<unit>.yaml` and matches the unit.
+        yaml.name = unit.as_str().to_owned();
 
         // Persist before killing, so a failed save leaves the original session intact.
         let path = self.store.save(&yaml)?;
@@ -255,17 +257,21 @@ impl DaemonManager {
     pub fn handle_create_sysd_session(
         &mut self,
         working_dir: String,
-        command: Option<String>, // TODO MUST BE SOME
+        command: Option<String>,
         name: Option<String>,
-    ) -> Vec<SessionInfo> {
+    ) -> Result<Vec<SessionInfo>> {
         // We can only create a stopped session here; the client sends Start later.
-        let name = name.unwrap_or_else(|| "penar".to_string());
-        let command = command.unwrap();
+        let Some(command) = command else {
+            bail!("A service needs a command to run");
+        };
+        let name = name.ok_or_else(|| color_eyre::eyre::eyre!("A service needs a name"))?;
 
-        let unit = UnitName::new(&name).expect("Invalid systemd unit name");
+        // Validate the name and check it is free before writing anything to disk.
+        let unit = UnitName::new(&name)?;
+        self.runtime.check_new_session_name(unit.as_str())?;
 
         let yaml = YamlSession {
-            name,
+            name: unit.as_str().to_owned(),
             windows: vec![YamlWindow {
                 command,
                 working_directory: working_dir,
@@ -274,13 +280,15 @@ impl DaemonManager {
             }],
         };
 
-        let path = self.store.save(&yaml).unwrap();
+        let path = self.store.save(&yaml)?;
+        if let Err(e) = self.store.create_service(&path, &unit) {
+            // Do not leave a YAML file behind that no unit points at.
+            let _ = std::fs::remove_file(&path);
+            return Err(e);
+        }
 
-        // TODO, this might not actually succeed
-        self.store.create_service(&path, &unit).unwrap();
-
-        self.runtime.add_stopped_sysd_session(unit, false);
-        self.runtime.all_session_info()
+        self.runtime.add_stopped_sysd_session(unit, false)?;
+        Ok(self.runtime.all_session_info())
     }
 
     /// Registers every sysd session that exists on disk but is not known to this
@@ -296,8 +304,10 @@ impl DaemonManager {
             }
             debug!("Registering stopped sysd session '{}'", stored.unit);
             // The enabled state is filled in by the systemd event watcher once it connects.
-            self.runtime.add_stopped_sysd_session(stored.unit, false);
-            registered += 1;
+            match self.runtime.add_stopped_sysd_session(stored.unit.clone(), false) {
+                Ok(_) => registered += 1,
+                Err(e) => warn!("Skipping stored sysd session '{}': {e}", stored.unit),
+            }
         }
 
         Ok(registered)

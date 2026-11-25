@@ -66,11 +66,12 @@ impl DaemonService for DaemonRpcServer {
         terminal_id: TerminalId,
         scrollback: u32,
         since: u64,
-    ) -> TerminalUpdate {
+    ) -> Result<TerminalUpdate, String> {
         self.manager
             .lock()
             .await
             .get_wanted_data(terminal_id, scrollback, since)
+            .map_err(|e| e.to_string())
     }
 
     async fn start(self, _: context::Context, rows: u16, cols: u16) {
@@ -89,9 +90,11 @@ impl DaemonService for DaemonRpcServer {
         working_dir: String,
         command: Option<String>,
         name: Option<String>,
-    ) -> Vec<SessionInfo> {
+    ) -> Result<Vec<SessionInfo>, String> {
         let mut manager = self.manager.lock().await;
-        manager.handle_create_session(working_dir, command, name)
+        manager
+            .handle_create_session(working_dir, command, name)
+            .map_err(|e| e.to_string())
     }
 
     async fn create_sysd_session(
@@ -100,14 +103,15 @@ impl DaemonService for DaemonRpcServer {
         working_dir: String,
         command: Option<String>,
         name: Option<String>,
-    ) -> Vec<SessionInfo> {
+    ) -> Result<Vec<SessionInfo>, String> {
         let sessions = self
             .manager
             .lock()
             .await
-            .handle_create_sysd_session(working_dir, command, name);
+            .handle_create_sysd_session(working_dir, command, name)
+            .map_err(|e| format!("{e:#}"))?;
         self.reload_systemd().await;
-        sessions
+        Ok(sessions)
     }
 
     async fn exit_session(self, _: context::Context) -> Vec<SessionInfo> {
@@ -120,9 +124,16 @@ impl DaemonService for DaemonRpcServer {
         manager.handle_kill_session(id)
     }
 
-    async fn write_terminal(self, _: context::Context, terminal_id: TerminalId, data: Vec<u8>) {
+    async fn write_terminal(
+        self,
+        _: context::Context,
+        terminal_id: TerminalId,
+        data: Vec<u8>,
+    ) -> Result<(), String> {
         let mut manager = self.manager.lock().await;
-        manager.handle_write(terminal_id, data);
+        manager
+            .handle_write(terminal_id, data)
+            .map_err(|e| e.to_string())
     }
 
     async fn list_sessions(self, _: context::Context) -> Vec<SessionInfo> {
@@ -134,9 +145,11 @@ impl DaemonService for DaemonRpcServer {
         self.manager.lock().await.handle_session_id_by_name(&name)
     }
 
-    async fn create_window(self, _: context::Context, id: SessionId) -> SessionInfo {
+    async fn create_window(self, _: context::Context, id: SessionId) -> Result<SessionInfo, String> {
         let mut manager = self.manager.lock().await;
-        manager.handle_create_window(id)
+        manager
+            .handle_create_window(id)
+            .map_err(|e| e.to_string())
     }
 
     async fn open_session(self, _: context::Context, id: SessionId) -> Result<SessionInfo, String> {
@@ -144,9 +157,11 @@ impl DaemonService for DaemonRpcServer {
         manager.handle_open_session(id).map_err(|e| e.to_string())
     }
 
-    async fn change_window(self, _: context::Context, window_id: WindowId) {
+    async fn change_window(self, _: context::Context, window_id: WindowId) -> Result<(), String> {
         let mut manager = self.manager.lock().await;
-        manager.handle_change_window(window_id);
+        manager
+            .handle_change_window(window_id)
+            .map_err(|e| e.to_string())
     }
 
     async fn kill_window(

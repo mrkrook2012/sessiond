@@ -37,7 +37,6 @@ fn next_event(receiver: &mut UnboundedReceiver<TerminalEvent>) -> TerminalEvent 
 }
 
 fn start_sysd(runtime: &mut SessionRuntime, windows: Vec<YamlWindow>) -> RunId {
-    let windows = runtime.spawn_windows(windows, true);
     runtime
         .start_or_create_sysd_session(UnitName::new("svc").unwrap(), windows)
         .unwrap()
@@ -56,7 +55,7 @@ fn first_terminal(runtime: &SessionRuntime, name: &str) -> TerminalId {
 }
 
 fn ephemeral(runtime: &mut SessionRuntime, name: &str, command: &str) -> SessionId {
-    runtime.create_ephemeral_session("/tmp".into(), Some(command.into()), Some(name.into()));
+    runtime.create_ephemeral_session("/tmp".into(), Some(command.into()), Some(name.into())).unwrap();
     id_of(runtime, name)
 }
 
@@ -76,10 +75,15 @@ fn ephemeral_session_starts_with_one_window() {
 }
 
 #[test]
-fn ephemeral_session_without_a_name_gets_the_default() {
+fn ephemeral_sessions_without_a_name_get_free_default_names() {
     let (mut runtime, _events) = runtime();
-    runtime.create_ephemeral_session("/tmp".into(), None, None);
-    assert_eq!(runtime.all_session_info()[0].name, "penar");
+    runtime.create_ephemeral_session("/tmp".into(), None, None).unwrap();
+    assert_eq!(runtime.all_session_info()[0].name, "session-1");
+
+    runtime.create_ephemeral_session("/tmp".into(), None, None).unwrap();
+    let mut names: Vec<_> = runtime.all_session_info().into_iter().map(|s| s.name).collect();
+    names.sort();
+    assert_eq!(names, vec!["session-1", "session-2"]);
 }
 
 #[test]
@@ -132,7 +136,7 @@ fn open_session_returns_its_info() {
 #[test]
 fn open_session_without_windows_fails() {
     let (mut runtime, _events) = runtime();
-    runtime.add_stopped_sysd_session(UnitName::new("svc").unwrap(), false);
+    runtime.add_stopped_sysd_session(UnitName::new("svc").unwrap(), false).unwrap();
     assert!(runtime.open_session(id_of(&runtime, "svc")).is_err());
     assert!(runtime.open_session(SessionId(Guid::from_u128(99))).is_err());
 }
@@ -144,10 +148,10 @@ fn screen_size_updates_reach_existing_terminals() {
     let terminal = first_terminal(&runtime, "eph");
 
     runtime.update_screen_size(30, 70);
-    runtime.write(terminal, b"echo size_$(stty size | tr ' ' x)\r".to_vec());
+    runtime.write(terminal, b"echo size_$(stty size | tr ' ' x)\r".to_vec()).unwrap();
 
     eventually("resized terminal", || {
-        let data = runtime.get_terminal_data(terminal, 0, 0).data;
+        let data = runtime.get_terminal_data(terminal, 0, 0).unwrap().data;
         screen_text(&data, 30, 70).contains("size_30x70").then_some(())
     });
 }
@@ -172,7 +176,7 @@ fn to_yaml_captures_command_and_directory() {
 #[test]
 fn to_yaml_of_a_stopped_or_unknown_session_fails() {
     let (mut runtime, _events) = runtime();
-    runtime.add_stopped_sysd_session(UnitName::new("svc").unwrap(), false);
+    runtime.add_stopped_sysd_session(UnitName::new("svc").unwrap(), false).unwrap();
     assert!(runtime.to_yaml(id_of(&runtime, "svc")).is_err());
     assert!(runtime.to_yaml(SessionId(Guid::from_u128(99))).is_err());
 }
@@ -186,8 +190,8 @@ fn spawned_windows_run_in_their_working_directory() {
             window("sleep 301", false),
         ],
         false,
-    );
-    runtime.add_ephemeral_session("multi".into(), windows);
+    ).unwrap();
+    runtime.add_ephemeral_session("multi".into(), windows).unwrap();
     let id = id_of(&runtime, "multi");
 
     let yaml = eventually("both commands", || {
@@ -204,7 +208,7 @@ fn spawned_windows_run_in_their_working_directory() {
 fn sysd_unit_only_exists_for_sysd_sessions() {
     let (mut runtime, _events) = runtime();
     let eph = ephemeral(&mut runtime, "eph", "true");
-    runtime.add_stopped_sysd_session(UnitName::new("Svc").unwrap(), false);
+    runtime.add_stopped_sysd_session(UnitName::new("Svc").unwrap(), false).unwrap();
 
     assert!(runtime.sysd_unit(eph).is_err());
     assert!(runtime.sysd_unit(SessionId(Guid::from_u128(99))).is_err());
@@ -216,7 +220,7 @@ fn sysd_unit_only_exists_for_sysd_sessions() {
 fn enabled_state_shows_in_session_info() {
     let (mut runtime, _events) = runtime();
     let unit = UnitName::new("svc").unwrap();
-    runtime.add_stopped_sysd_session(unit.clone(), false);
+    runtime.add_stopped_sysd_session(unit.clone(), false).unwrap();
 
     let data = info(&runtime, "svc").sysd_data.unwrap();
     assert!(!data.enabled && !data.running);
@@ -354,7 +358,7 @@ fn manual_stop_does_not_end_the_run() {
 
     // Give bash a moment to start `sleep`, then press Ctrl+C like a user would.
     std::thread::sleep(Duration::from_millis(300));
-    runtime.write(terminal_id, vec![0x03]);
+    runtime.write(terminal_id, vec![0x03]).unwrap();
 
     let TerminalEvent::TrackedCommandExited { terminal_id, code } = next_event(&mut events);
     assert_eq!(code, 130, "Ctrl+C should end the command with SIGINT");
@@ -367,8 +371,8 @@ fn manual_stop_does_not_end_the_run() {
 fn tracked_exit_is_ignored_for_ephemeral_sessions_and_unknown_terminals() {
     let (mut runtime, _events) = runtime();
     // Marked tracked in the YAML, but loaded as an ephemeral session.
-    let windows = runtime.spawn_windows(vec![window("sleep 300", true)], false);
-    runtime.add_ephemeral_session("eph".into(), windows);
+    let windows = runtime.spawn_windows(vec![window("sleep 300", true)], false).unwrap();
+    runtime.add_ephemeral_session("eph".into(), windows).unwrap();
     let terminal = first_terminal(&runtime, "eph");
 
     assert!(!runtime.handle_tracked_exit(terminal, 1));
@@ -383,4 +387,86 @@ fn tracked_exit_from_an_untracked_window_is_ignored() {
 
     assert!(!runtime.handle_tracked_exit(terminal, 1));
     assert_eq!(runtime.sysd_wait_status("svc", run), SysdWaitStatus::Running);
+}
+
+// ------------------------------------------------------------------ names and stale ids
+
+#[test]
+fn starting_a_service_never_touches_an_ephemeral_session_with_that_name() {
+    let (mut runtime, _events) = runtime();
+    let id = ephemeral(&mut runtime, "SVC", "sleep 300");
+    let terminal = first_terminal(&runtime, "SVC");
+
+    let err = runtime
+        .start_or_create_sysd_session(UnitName::new("svc").unwrap(), vec![window("sleep 301", true)])
+        .unwrap_err();
+    assert!(err.to_string().contains("ephemeral session 'SVC'"), "got: {err}");
+
+    // The ephemeral session is intact, still usable, and nothing was spawned for the service.
+    let all = runtime.all_session_info();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].windows_info.len(), 1);
+    assert!(runtime.get_terminal_data(terminal, 0, 0).is_ok());
+    assert!(runtime.to_yaml(id).is_ok());
+}
+
+#[test]
+fn duplicate_names_are_rejected_before_anything_is_spawned() {
+    let (mut runtime, _events) = runtime();
+    ephemeral(&mut runtime, "eph", "sleep 300");
+
+    assert!(runtime
+        .create_ephemeral_session("/tmp".into(), None, Some("EPH".into()))
+        .is_err());
+    assert!(runtime.add_stopped_sysd_session(UnitName::new("eph").unwrap(), false).is_err());
+    assert!(runtime
+        .create_ephemeral_session("/tmp".into(), None, Some("../escape".into()))
+        .is_err());
+    assert_eq!(runtime.all_session_info().len(), 1);
+}
+
+#[test]
+fn rejected_windows_are_torn_down() {
+    let (mut runtime, _events) = runtime();
+    ephemeral(&mut runtime, "eph", "sleep 300");
+
+    let windows = runtime.spawn_windows(vec![window("sleep 301", false)], false).unwrap();
+    assert!(runtime.add_ephemeral_session("eph".into(), windows.clone()).is_err());
+    // The orphaned window was destroyed, not leaked.
+    assert!(runtime.change_window(windows[0]).is_err());
+}
+
+#[test]
+fn stale_ids_are_errors_not_panics() {
+    let (mut runtime, _events) = runtime();
+    let id = ephemeral(&mut runtime, "eph", "sleep 300");
+    let window = info(&runtime, "eph").windows_info[0].clone();
+    runtime.kill_session(id);
+
+    assert!(runtime.get_terminal_data(window.terminal_id, 0, 0).is_err());
+    assert!(runtime.write(window.terminal_id, b"x".to_vec()).is_err());
+    assert!(runtime.change_window(window.window_id).is_err());
+    assert!(runtime.kill_window(id, window.window_id).is_err());
+    assert!(runtime.create_window(id).is_err());
+    assert!(runtime.open_session(id).is_err());
+}
+
+#[test]
+fn a_window_can_only_be_killed_through_its_own_session() {
+    let (mut runtime, _events) = runtime();
+    let a = ephemeral(&mut runtime, "a", "sleep 300");
+    ephemeral(&mut runtime, "b", "sleep 300");
+    let b_window = info(&runtime, "b").windows_info[0].window_id;
+
+    assert!(runtime.kill_window(a, b_window).is_err());
+    assert_eq!(info(&runtime, "b").windows_info.len(), 1);
+    assert!(runtime.change_window(b_window).is_ok());
+}
+
+#[test]
+fn creating_a_window_in_a_stopped_service_fails_without_leaking() {
+    let (mut runtime, _events) = runtime();
+    let id = runtime.add_stopped_sysd_session(UnitName::new("svc").unwrap(), false).unwrap();
+    assert!(runtime.create_window(id).is_err());
+    assert!(info(&runtime, "svc").windows_info.is_empty());
 }

@@ -10,7 +10,7 @@ use crate::support::{eventually, screen_text};
 
 fn terminal(rows: u16, cols: u16) -> (VirtualTerminal, UnboundedReceiver<TerminalEvent>) {
     let (events, receiver) = unbounded_channel();
-    (VirtualTerminal::new(TerminalId(Guid::from_u128(1)), rows, cols, events), receiver)
+    (VirtualTerminal::new(TerminalId(Guid::from_u128(1)), rows, cols, events).unwrap(), receiver)
 }
 
 fn text(terminal: &VirtualTerminal) -> String {

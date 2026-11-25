@@ -81,7 +81,7 @@ fn create_list_and_kill_ephemeral_sessions() {
     let mut f = Fixture::new();
     let after_create = f
         .manager
-        .handle_create_session("/tmp".into(), Some("true".into()), Some("eph".into()));
+        .handle_create_session("/tmp".into(), Some("true".into()), Some("eph".into())).unwrap();
     assert_eq!(after_create.len(), 1);
 
     let id = f.id("eph");
@@ -118,7 +118,7 @@ fn start_session_from_bad_file_fails_without_creating_anything() {
 fn export_to_file_writes_name_dot_yaml_into_the_directory() {
     let mut f = Fixture::new();
     f.manager
-        .handle_create_session("/tmp".into(), Some("sleep 300".into()), Some("exp".into()));
+        .handle_create_session("/tmp".into(), Some("sleep 300".into()), Some("exp".into())).unwrap();
     let id = f.id("exp");
     let out = f.dir.path().join("out");
     fs::create_dir(&out).unwrap();
@@ -212,7 +212,7 @@ fn tracked_exit_event_is_reported_to_waiters() {
 fn state_changes_wake_waiters() {
     let mut f = Fixture::new();
     f.manager
-        .handle_create_session("/tmp".into(), Some("true".into()), Some("eph".into()));
+        .handle_create_session("/tmp".into(), Some("true".into()), Some("eph".into())).unwrap();
     let (_, changes) = f.manager.sysd_wait_status("eph", RunId(Guid::from_u128(1)));
     assert!(!changes.has_changed().unwrap());
 
@@ -231,9 +231,9 @@ fn update_saves_added_windows_to_the_file_the_service_started_from() {
     let id = f.id("server");
 
     // Add a window and run a monitor in it, like btop next to a game server.
-    let info = f.manager.handle_create_window(id);
+    let info = f.manager.handle_create_window(id).unwrap();
     let monitor = info.windows_info[1].terminal_id;
-    f.manager.handle_write(monitor, b"sleep 302\r".to_vec());
+    f.manager.handle_write(monitor, b"sleep 302\r".to_vec()).unwrap();
 
     let yaml = eventually("the monitor to be saved", || {
         let written = f.manager.handle_update_sysd_session(id).unwrap();
@@ -266,7 +266,7 @@ fn update_saves_added_windows_to_the_file_the_service_started_from() {
 fn update_rejects_ephemeral_and_stopped_sessions_without_writing() {
     let mut f = Fixture::new();
     f.manager
-        .handle_create_session("/tmp".into(), Some("sleep 300".into()), Some("eph".into()));
+        .handle_create_session("/tmp".into(), Some("sleep 300".into()), Some("eph".into())).unwrap();
     assert!(f.manager.handle_update_sysd_session(f.id("eph")).is_err());
 
     let path = f.yaml("svc", &[("sleep 300", true)]);
@@ -288,7 +288,7 @@ fn update_rejects_ephemeral_and_stopped_sessions_without_writing() {
 fn delete_target_rejects_ephemeral_sessions() {
     let mut f = Fixture::new();
     f.manager
-        .handle_create_session("/tmp".into(), Some("true".into()), Some("eph".into()));
+        .handle_create_session("/tmp".into(), Some("true".into()), Some("eph".into())).unwrap();
     assert!(f.manager.sysd_delete_target("eph").is_err());
 }
 
@@ -334,4 +334,52 @@ fn deleting_something_that_does_not_exist_fails() {
         .handle_delete_sysd_session(&UnitName::new(&unique("ghost")).unwrap())
         .unwrap_err();
     assert!(err.to_string().contains("No service named"), "got: {err}");
+}
+
+#[test]
+fn starting_a_service_file_does_not_clobber_an_ephemeral_session() {
+    let mut f = Fixture::new();
+    f.manager
+        .handle_create_session("/tmp".into(), Some("sleep 300".into()), Some("Clash".into()))
+        .unwrap();
+    let path = f.yaml("clash", &[("sleep 301", true)]);
+
+    assert!(f.manager.handle_start_sysd_session_from_file(path).is_err());
+    let session = f.session("Clash").expect("ephemeral session survives");
+    assert!(session.sysd_data.is_none());
+    assert_eq!(session.windows_info.len(), 1);
+}
+
+#[test]
+fn sessions_from_files_need_a_valid_free_name() {
+    let mut f = Fixture::new();
+    let bad = f.dir.path().join("bad.yaml");
+    fs::write(&bad, "name: ../../escape\nwindows: []\n").unwrap();
+    assert!(f.manager.handle_start_session_from_file(bad.clone()).is_err());
+    assert!(f.manager.handle_start_sysd_session_from_file(bad).is_err());
+
+    let path = f.yaml("twice", &[("sleep 300", false)]);
+    f.manager.handle_start_session_from_file(path.clone()).unwrap();
+    assert!(f.manager.handle_start_session_from_file(path).is_err());
+    assert_eq!(f.manager.handle_list_sessions().len(), 1);
+}
+
+#[test]
+fn creating_a_service_validates_before_writing() {
+    let mut f = Fixture::new();
+    for (command, name) in [
+        (None, Some("svc")),
+        (Some("true"), None),
+        (Some("true"), Some("has space")),
+        (Some("true"), Some("../escape")),
+    ] {
+        let result = f.manager.handle_create_sysd_session(
+            "/tmp".into(),
+            command.map(String::from),
+            name.map(String::from),
+        );
+        assert!(result.is_err(), "accepted {command:?} {name:?}");
+    }
+    assert!(fs::read_dir(f.dir.path().join("data")).unwrap().next().is_none(), "wrote a file");
+    assert!(f.manager.handle_list_sessions().is_empty());
 }

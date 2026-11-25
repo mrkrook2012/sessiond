@@ -72,18 +72,43 @@ impl SessionManager {
         self.sessions.contains_key(&id)
     }
 
-    pub fn create_ephem_session(&mut self, window_id: Vec<WindowId>, name: String) -> SessionId {
+    /// Errors unless `name` is a valid session name that no session uses yet, in any case.
+    /// Names are unique ignoring case because a sysd session's unit name is its name in
+    /// lowercase, and two sessions must never end up with the same unit or YAML file.
+    pub fn check_new_name(&self, name: &str) -> Result<()> {
+        validate_session_name(name)?;
+        if let Some(existing) = self
+            .sessions
+            .values()
+            .find(|session| session.name.eq_ignore_ascii_case(name))
+        {
+            bail!("A session named '{}' already exists", existing.name);
+        }
+        Ok(())
+    }
+
+    /// The first of `session-1`, `session-2`, ... that no session uses yet.
+    pub fn free_default_name(&self) -> String {
+        (1..)
+            .map(|n| format!("session-{n}"))
+            .find(|name| !self.does_session_name_exist(name))
+            .expect("some session-N name is free")
+    }
+
+    pub fn create_ephem_session(&mut self, windows: Vec<WindowId>, name: String) -> Result<SessionId> {
+        self.check_new_name(&name)?;
         let id = self.generate_id();
         let session = Session {
             id,
-            name: name,
-            kind: SessionKind::Ephemoral { windows: window_id },
+            name,
+            kind: SessionKind::Ephemoral { windows },
         };
         self.sessions.insert(id, session);
-        id
+        Ok(id)
     }
 
-    pub fn create_running_sysd_session(&mut self, name: UnitName, windows: Vec<WindowId>) -> RunId {
+    pub fn create_running_sysd_session(&mut self, name: UnitName, windows: Vec<WindowId>) -> Result<RunId> {
+        self.check_new_name(name.as_str())?;
         let id = self.generate_id();
         let run = self.next_run();
         let session = Session {
@@ -96,10 +121,11 @@ impl SessionManager {
             }),
         };
         self.sessions.insert(id, session);
-        run
+        Ok(run)
     }
 
-    pub fn create_stopped_sysd_session(&mut self, name: UnitName, enabled: bool) -> SessionId {
+    pub fn create_stopped_sysd_session(&mut self, name: UnitName, enabled: bool) -> Result<SessionId> {
+        self.check_new_name(name.as_str())?;
         let id = self.generate_id();
         let session = Session {
             id,
@@ -111,7 +137,7 @@ impl SessionManager {
             }),
         };
         self.sessions.insert(id, session);
-        id
+        Ok(id)
     }
 
     /// Unit names of every sysd session, running or stopped.
@@ -145,26 +171,20 @@ impl SessionManager {
             .map(|session| session.id)
     }
 
+    /// True if a session has this name, ignoring case (names are unique ignoring case).
     pub fn does_session_name_exist(&self, name: &str) -> bool {
-        self.sessions.values().any(|session| session.name == name)
+        self.sessions.values().any(|session| session.name.eq_ignore_ascii_case(name))
     }
 
-    /// Resolves a name the user typed. An exact match wins; otherwise a match that only
-    /// differs in case is accepted if it is the only one. Anything else returns the
-    /// sessions with similar names, so the user can be told what they probably meant.
+    /// Resolves a name the user typed, ignoring case (names are unique ignoring case).
+    /// If there is no such session, returns the sessions with similar names, so the user
+    /// can be told what they probably meant.
     pub fn lookup_by_name(&self, name: &str) -> SessionLookup {
-        if let Some(session) = self.sessions.values().find(|session| session.name == name) {
-            return SessionLookup::Found {
-                id: session.id,
-                name: session.name.clone(),
-            };
-        }
-
-        let mut same_ignoring_case = self
+        if let Some(session) = self
             .sessions
             .values()
-            .filter(|session| session.name.eq_ignore_ascii_case(name));
-        if let (Some(session), None) = (same_ignoring_case.next(), same_ignoring_case.next()) {
+            .find(|session| session.name.eq_ignore_ascii_case(name))
+        {
             return SessionLookup::Found {
                 id: session.id,
                 name: session.name.clone(),
@@ -357,13 +377,43 @@ pub enum SessionState {
     Stopped, // TODO Handle possible exit codes later
 }
 
-// Unit name struct that has to be a valid unit name
+/// Longest session name accepted. Well under systemd's 255-byte unit name limit.
+pub const MAX_SESSION_NAME_LEN: usize = 100;
+
+/// Errors unless `name` can be used as a session name.
+///
+/// Session names become file names (`<name>.yaml`, `<name>.service`) and systemd unit
+/// names, and are passed around on command lines, so only a conservative set is allowed:
+/// ASCII letters, digits, `-`, `_` and `.`, not starting with `.` or `-`. That rules out
+/// path separators, `..`, whitespace and anything a shell or unit file would interpret.
+pub fn validate_session_name(name: &str) -> Result<()> {
+    let Some(first) = name.chars().next() else {
+        bail!("Session name must not be empty");
+    };
+    if name.len() > MAX_SESSION_NAME_LEN {
+        bail!("Session name '{name}' is too long (at most {MAX_SESSION_NAME_LEN} characters)");
+    }
+    if let Some(bad) = name
+        .chars()
+        .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')))
+    {
+        bail!(
+            "Session name '{name}' contains {bad:?}: use only letters, digits, '-', '_' and '.'"
+        );
+    }
+    if matches!(first, '.' | '-') {
+        bail!("Session name '{name}' must not start with '{first}'");
+    }
+    Ok(())
+}
+
+/// A sysd session's systemd unit name, without `.service`: a valid session name, lowercased.
 #[derive(Debug, Clone, Eq, Hash, PartialEq, Encode, Decode)]
 pub struct UnitName(String);
 
 impl UnitName {
     pub fn new(name: &str) -> Result<Self> {
-        // TODO add actual verification here.
+        validate_session_name(name)?;
         Ok(UnitName(name.to_ascii_lowercase()))
     }
 

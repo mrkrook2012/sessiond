@@ -316,15 +316,6 @@ async fn handle_run(systemd: bool, name: Option<String>, command: Vec<String>) -
     ensure_daemon_running().await?;
     let rpc = connect().await?;
 
-    // Check for duplicate names.
-    if let Some(ref name) = name {
-        let sessions = list_sessions(&rpc).await?;
-
-        if sessions.iter().any(|session| &session.name == name) {
-            return Err(eyre!("A session named '{}' already exists", name));
-        }
-    }
-
     let name = name.unwrap_or_else(generate_random_name);
     let command = command_line(&command);
 

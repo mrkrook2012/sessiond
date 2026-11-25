@@ -1,4 +1,4 @@
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, bail, eyre};
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -35,14 +35,13 @@ impl SystemdManager {
         let mut service_file_path_buffer = sysd_directory.to_path_buf();
         service_file_path_buffer.push(name.as_str());
         service_file_path_buffer.add_extension("service");
-        let bin_path = std::env::current_exe()
-            .unwrap()
+        let bin_path = std::env::current_exe()?
             .into_os_string()
             .into_string()
-            .unwrap();
+            .map_err(|path| eyre!("Path of this binary is not valid UTF-8: {path:?}"))?;
 
         if bin_path.contains("(deleted)") {
-            panic!("Binary location has been deleted???")
+            bail!("This binary was deleted or replaced while running ({bin_path}); restart the daemon");
         }
         let start_command = format!(
             "{bin_path} __internal-systemd-start {:?}",
@@ -64,7 +63,9 @@ impl SystemdManager {
             let line = format!("Environment=\"{SOCKET_ENV_VAR}={}\"\n", socket.to_string_lossy());
             file_contents = file_contents.replacen("[Service]\n", &format!("[Service]\n{line}"), 1);
         }
-        fs::write(service_file_path_buffer, file_contents).unwrap();
+        fs::write(&service_file_path_buffer, file_contents).map_err(|e| {
+            eyre!("Failed to write unit file {}: {e}", service_file_path_buffer.display())
+        })?;
 
         Ok(())
     }
@@ -104,7 +105,7 @@ impl SystemdManager {
         .replace("{user}", user)
         .replace("{start_command}", &start_command)
         .replace("{stop_command}", &stop_command)
-        .replace("{work_dir}", directory.to_str().unwrap())
+        .replace("{work_dir}", &directory.to_string_lossy())
         .replace("{restart_policy}", restart.as_str())
     }
 

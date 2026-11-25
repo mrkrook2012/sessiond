@@ -58,7 +58,7 @@ impl DaemonClient {
         scrollback: u32,
         since: u64,
     ) -> Result<TerminalUpdate> {
-        self.rpc_call(self.client.get_wanted_data(
+        self.rpc_call_result(self.client.get_wanted_data(
             context::current(),
             terminal_id,
             scrollback,
@@ -81,7 +81,7 @@ impl DaemonClient {
     }
 
     pub async fn write_terminal(&self, terminal_id: TerminalId, data: Vec<u8>) -> Result<()> {
-        self.rpc_call(
+        self.rpc_call_result(
             self.client
                 .write_terminal(context::current(), terminal_id, data),
         )
@@ -89,7 +89,7 @@ impl DaemonClient {
     }
 
     pub async fn change_window(&self, window_id: WindowId) -> Result<()> {
-        self.rpc_call(self.client.change_window(context::current(), window_id))
+        self.rpc_call_result(self.client.change_window(context::current(), window_id))
             .await
     }
 
@@ -101,7 +101,7 @@ impl DaemonClient {
         command: Option<String>,
         name: Option<String>,
     ) -> Result<Vec<SessionInfo>> {
-        self.rpc_call(
+        self.rpc_call_result(
             self.client
                 .create_session(context::current(), working_dir, command, name),
         )
@@ -117,10 +117,12 @@ impl DaemonClient {
         working_dir: String,
         command: Option<String>,
         name: Option<String>,
-    ) -> Result<Vec<SessionInfo>, tarpc::client::RpcError> {
-        self.client
-            .create_sysd_session(context::current(), working_dir, command, name)
-            .await
+    ) -> Result<Vec<SessionInfo>> {
+        self.rpc_call_result(
+            self.client
+                .create_sysd_session(context::current(), working_dir, command, name),
+        )
+        .await
     }
 
     pub async fn exit_session(&self) -> Result<Vec<SessionInfo>> {
@@ -151,7 +153,7 @@ impl DaemonClient {
     // Window operations
 
     pub async fn create_window(&self, id: SessionId) -> Result<SessionInfo> {
-        self.rpc_call(self.client.create_window(context::current(), id))
+        self.rpc_call_result(self.client.create_window(context::current(), id))
             .await
     }
 

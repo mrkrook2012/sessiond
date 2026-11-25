@@ -9,7 +9,11 @@ use crate::ipc::protocol::{SessionInfo, SessionLookup, SysdAction, SysdWaitStatu
 pub trait DaemonService {
     /// A terminal's screen, scrolled `scrollback` lines back into its history (0 = live).
     /// `data` is empty if the screen has not changed since generation `since` (0 = always send).
-    async fn get_wanted_data(terminal_id: TerminalId, scrollback: u32, since: u64) -> TerminalUpdate;
+    async fn get_wanted_data(
+        terminal_id: TerminalId,
+        scrollback: u32,
+        since: u64,
+    ) -> Result<TerminalUpdate, String>;
 
     /// Initialize the daemon connection.
     async fn start(rows: u16, cols: u16);
@@ -22,14 +26,14 @@ pub trait DaemonService {
         working_dir: String,
         command: Option<String>,
         name: Option<String>,
-    ) -> Vec<SessionInfo>;
+    ) -> Result<Vec<SessionInfo>, String>;
 
     /// Create a new systemd-backed session.
     async fn create_sysd_session(
         working_dir: String,
         command: Option<String>,
         name: Option<String>,
-    ) -> Vec<SessionInfo>;
+    ) -> Result<Vec<SessionInfo>, String>;
 
     /// Delete a systemd session by name: disables and stops the unit, and removes its
     /// `.service` and `.yaml` files. Returns the removed files.
@@ -42,7 +46,7 @@ pub trait DaemonService {
     async fn kill_session(id: SessionId) -> Vec<SessionInfo>;
 
     /// Write bytes to a terminal.
-    async fn write_terminal(terminal_id: TerminalId, data: Vec<u8>);
+    async fn write_terminal(terminal_id: TerminalId, data: Vec<u8>) -> Result<(), String>;
 
     /// List all sessions.
     async fn list_sessions() -> Vec<SessionInfo>;
@@ -51,13 +55,13 @@ pub trait DaemonService {
     async fn session_id_by_name(name: String) -> SessionLookup;
 
     /// Create a window in a session.
-    async fn create_window(id: SessionId) -> SessionInfo;
+    async fn create_window(id: SessionId) -> Result<SessionInfo, String>;
 
     /// Open a session.
     async fn open_session(id: SessionId) -> Result<SessionInfo, String>;
 
     /// Change the currently selected window.
-    async fn change_window(window_id: WindowId);
+    async fn change_window(window_id: WindowId) -> Result<(), String>;
 
     /// Kill a window.
     async fn kill_window(id: SessionId, window_id: WindowId) -> Result<SessionInfo, String>;

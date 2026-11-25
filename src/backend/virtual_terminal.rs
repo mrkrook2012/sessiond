@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
 use vt100::{Callbacks, Parser};
 
+use color_eyre::eyre::{Result, eyre};
+
 use crate::backend::terminal_manager::TerminalId;
 
 /// Lines of scrollback kept by the parser, per terminal.
@@ -222,12 +224,13 @@ pub struct VirtualTerminal {
 }
 
 impl VirtualTerminal {
+    /// Opens a PTY and starts bash in it. Fails if either cannot be created.
     pub fn new(
         id: TerminalId,
         global_rows: u16,
         global_cols: u16,
         events: UnboundedSender<TerminalEvent>,
-    ) -> Self {
+    ) -> Result<Self> {
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows: global_rows,
@@ -235,7 +238,18 @@ impl VirtualTerminal {
                 pixel_height: 0,
                 pixel_width: 0,
             })
-            .expect("failed to open pty");
+            .map_err(|e| eyre!("Failed to open a PTY: {e}"))?;
+
+        // Everything that can fail happens before the shell is spawned, so a failure
+        // never leaves a shell running without a terminal to own it.
+        let writer = pair
+            .master
+            .take_writer()
+            .map_err(|e| eyre!("Failed to take the PTY writer: {e}"))?;
+        let reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|e| eyre!("Failed to clone the PTY reader: {e}"))?;
 
         let mut command = portable_pty::CommandBuilder::new("/bin/bash");
         command.env("TERM", TERM);
@@ -246,9 +260,8 @@ impl VirtualTerminal {
         let child = pair
             .slave
             .spawn_command(command)
-            .expect("failed to spawn shell");
+            .map_err(|e| eyre!("Failed to spawn a shell: {e}"))?;
 
-        let writer = pair.master.take_writer().expect("failed to take pty writer");
         debug!(terminal = ?id, shell_pid = ?child.process_id(), "Spawned shell");
 
         let state = Arc::new(Mutex::new(ShellState::default()));
@@ -268,7 +281,7 @@ impl VirtualTerminal {
         // Starts at 1, so a client asking with `since: 0` always gets the screen.
         let generation = Arc::new(AtomicU64::new(1));
         spawn_reader(
-            pair.master.try_clone_reader().expect("failed to clone pty reader"),
+            reader,
             Arc::clone(&parser),
             Arc::clone(&generation),
         );
@@ -292,7 +305,7 @@ impl VirtualTerminal {
         terminal.wait_for_first_output();
         terminal.write(SHELL_SETUP.as_bytes());
 
-        terminal
+        Ok(terminal)
     }
 
     /// Input typed in shell before its rc files ran can get lost, so wait until it drew something.

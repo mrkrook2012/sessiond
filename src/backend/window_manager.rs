@@ -39,32 +39,31 @@ impl WindowManager {
         id
     }
 
-    pub fn kill_window(&mut self, window_id: WindowId) {
-        self.windows.remove(&window_id).unwrap();
+    /// Removes a window and returns it, or `None` if there is no such window.
+    pub fn kill_window(&mut self, window_id: WindowId) -> Option<Window> {
+        self.windows.remove(&window_id)
     }
 
     pub fn get_window_id_from_terminal(&self, terminal_id: TerminalId) -> Option<WindowId> {
-        for (id, window) in &self.windows {
-            if window.terminal_id == terminal_id {
-                return Some(*id);
-            }
-        }
-        None
+        self.windows
+            .iter()
+            .find(|(_, window)| window.terminal_id == terminal_id)
+            .map(|(id, _)| *id)
     }
 
-    pub fn get_terminal_id_from_window_id(&self, window_id: &WindowId) -> TerminalId {
-        self.windows.get(&window_id).unwrap().terminal_id
+    pub fn get_terminal_id_from_window_id(&self, window_id: &WindowId) -> Option<TerminalId> {
+        self.windows.get(window_id).map(|window| window.terminal_id)
     }
 
-    pub fn get_window_info_by_id(&self, window_id: &WindowId) -> WindowInfo {
-        let window = self.get_window_by_id(window_id);
-        window.get_window_info()
+    pub fn get_window_info_by_id(&self, window_id: &WindowId) -> Option<WindowInfo> {
+        self.get_window_by_id(window_id).map(Window::get_window_info)
     }
 
-    pub fn get_window_by_id(&self, window_id: &WindowId) -> &Window {
-        self.windows.get(&window_id).unwrap()
+    pub fn get_window_by_id(&self, window_id: &WindowId) -> Option<&Window> {
+        self.windows.get(window_id)
     }
-    pub fn get_window_by_id_mut(&mut self, window_id: &WindowId) -> &mut Window {
-        self.windows.get_mut(&window_id).unwrap()
+
+    pub fn get_window_by_id_mut(&mut self, window_id: &WindowId) -> Option<&mut Window> {
+        self.windows.get_mut(window_id)
     }
 }
