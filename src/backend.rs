@@ -5,7 +5,6 @@ pub mod name_match;
 pub mod terminal;
 pub mod window;
 pub mod session;
-pub mod yaml;
 pub mod systemd;
 pub mod session_runtime;
-pub mod session_store;
+pub mod storage;

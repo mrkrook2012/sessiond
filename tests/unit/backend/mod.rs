@@ -9,4 +9,4 @@ mod systemd_unit_file;
 mod terminal;
 mod virtual_terminal;
 mod window;
-mod yaml;
+mod session_files;

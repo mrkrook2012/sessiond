@@ -127,7 +127,7 @@ fn importing_a_multi_window_session() {
     assert_eq!(h.sessions(), vec!["multi"]);
 
     let (_, yaml) = h.export("multi", &h.dir.path().join("export"));
-    let session: daemon_test::backend::yaml::models::YamlSession =
+    let session: daemon_test::backend::storage::session_files::SessionConfig =
         serde_yaml::from_str(&yaml).unwrap();
     let dirs: Vec<_> = session.windows.iter().map(|w| w.working_directory.as_str()).collect();
     assert_eq!(dirs, vec!["/tmp", "/"]);

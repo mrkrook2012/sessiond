@@ -672,7 +672,7 @@ async fn handle_internal_systemd_start(file_path: PathBuf) -> Result<()> {
 
 /// The session name as the daemon stores it (the unit name, lowercased).
 pub fn session_name_from_config(path: &std::path::Path) -> Result<String> {
-    let yaml: crate::backend::yaml::models::YamlSession =
+    let yaml: crate::backend::storage::session_files::SessionConfig =
         serde_yaml::from_str(&fs::read_to_string(path)?)?;
     Ok(crate::backend::systemd::UnitName::new(&yaml.name)?.into_string())
 }

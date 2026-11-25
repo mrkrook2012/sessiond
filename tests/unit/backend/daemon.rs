@@ -11,7 +11,7 @@ use daemon_test::backend::systemd::UnitName;
 use daemon_test::backend::terminal::Terminals;
 use daemon_test::backend::terminal::virtual_terminal::TerminalEvent;
 use daemon_test::backend::window::Windows;
-use daemon_test::backend::yaml::yaml_manager::YamlManager;
+use daemon_test::backend::storage::session_files::SessionFiles;
 use daemon_test::ipc::protocol::{SessionInfo, SysdWaitStatus};
 use daemon_test::backend::guid::Guid;
 use tempfile::TempDir;
@@ -34,7 +34,7 @@ impl Fixture {
             Terminals::new(events_tx),
             Windows::new(),
             Sessions::new(),
-            YamlManager::with_dir(dir.path().join("data")).unwrap(),
+            SessionFiles::with_dir(dir.path().join("data")).unwrap(),
         );
         Self { dir, daemon, events }
     }
@@ -237,9 +237,9 @@ fn update_saves_added_windows_to_the_file_the_service_started_from() {
     let yaml = eventually("the monitor to be saved", || {
         let written = f.daemon.handle_update_sysd_session(id).unwrap();
         assert_eq!(written, path, "must overwrite the file the unit starts from");
-        let yaml = YamlManager::with_dir(f.dir.path().to_path_buf())
+        let yaml = SessionFiles::with_dir(f.dir.path().to_path_buf())
             .unwrap()
-            .load_session(&path)
+            .load(&path)
             .unwrap();
         (yaml.windows.get(1).is_some_and(|w| w.command == "sleep 302")).then_some(yaml)
     });

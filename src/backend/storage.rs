@@ -1,32 +1,35 @@
+//! Everything that persists sessions: their YAML config files and systemd unit files.
+
+pub mod session_files;
+
 use tracing::{debug, info, warn};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
  
 use crate::backend::systemd::UnitName;
 use crate::backend::systemd::unit_file;
-use crate::backend::yaml::models::YamlSession;
-use crate::backend::yaml::yaml_manager::YamlManager;
+use crate::backend::storage::session_files::{SessionConfig, SessionFiles};
 use color_eyre::eyre::Result;
  
 /// Everything that touches disk or systemd: YAML session files and unit files.
 /// It knows nothing about live terminals or windows.
 pub struct SessionStore {
-    yaml_manager: YamlManager,
+    files: SessionFiles,
     /// The YAML file each sysd session was last started from: the one its unit's
     /// `ExecStart` points at, and so the one an update must overwrite.
     sysd_configs: HashMap<UnitName, PathBuf>,
 }
 
 impl SessionStore {
-    pub fn new(yaml_manager: YamlManager) -> Self {
+    pub fn new(files: SessionFiles) -> Self {
         Self {
-            yaml_manager,
+            files,
             sysd_configs: HashMap::new(),
         }
     }
 
-    pub fn load(&mut self, file_path: &Path) -> Result<YamlSession> {
-        self.yaml_manager.load_session(file_path)
+    pub fn load(&mut self, file_path: &Path) -> Result<SessionConfig> {
+        self.files.load(file_path)
     }
 
     /// Remembers that `unit` was started from `path`.
@@ -40,21 +43,21 @@ impl SessionStore {
     }
 
     /// Overwrites the YAML file at `path`.
-    pub fn save_to(&self, session: &YamlSession, path: &Path) -> Result<()> {
-        self.yaml_manager.save_session_to(session, path)
+    pub fn save_to(&self, session: &SessionConfig, path: &Path) -> Result<()> {
+        self.files.save_to(session, path)
     }
  
     /// Saves to the default session location and returns the path.
-    pub fn save(&mut self, session: &YamlSession) -> Result<PathBuf> {
-        self.yaml_manager.save_session(session)
+    pub fn save(&mut self, session: &SessionConfig) -> Result<PathBuf> {
+        self.files.save(session)
     }
  
     /// Saves as `<dir>/<name>.yaml` and returns the full path.
-    pub fn export_to_dir(&self, session: &YamlSession, mut dir: PathBuf) -> Result<PathBuf> {
+    pub fn export_to_dir(&self, session: &SessionConfig, mut dir: PathBuf) -> Result<PathBuf> {
         dir.push(&session.name);
         dir.set_extension("yaml");
  
-        self.yaml_manager.save_session_to(session, &dir)?;
+        self.files.save_to(session, &dir)?;
         Ok(dir)
     }
  
@@ -71,8 +74,8 @@ impl SessionStore {
     pub fn discover_sysd_sessions(&self) -> Result<Vec<StoredSysdSession>> {
         let mut found: Vec<StoredSysdSession> = Vec::new();
 
-        for path in self.yaml_manager.list_session_files()? {
-            let yaml = match self.yaml_manager.load_session(&path) {
+        for path in self.files.list()? {
+            let yaml = match self.files.load(&path) {
                 Ok(yaml) => yaml,
                 Err(e) => {
                     warn!("Skipping {}: failed to parse ({e})", path.display());
@@ -113,7 +116,7 @@ impl SessionStore {
     /// gone are skipped, so a half-deleted session can still be cleaned up.
     /// Returns the files that were removed.
     pub fn delete(&mut self, unit: &UnitName) -> Result<Vec<PathBuf>> {
-        let mut files = self.yaml_manager.find_session_files(unit.as_str())?;
+        let mut files = self.files.find_for_unit(unit.as_str())?;
         if unit_file::exists(unit) {
             files.push(unit_file::path(unit)?);
         }

@@ -10,12 +10,11 @@ use tokio::sync::{Mutex, watch};
 use crate::backend::session::{RunId, SessionId, Sessions};
 use crate::backend::systemd::UnitName;
 use crate::backend::session_runtime::SessionRuntime;
-use crate::backend::session_store::SessionStore;
+use crate::backend::storage::SessionStore;
 use crate::backend::terminal::{TerminalId, Terminals};
 use crate::backend::terminal::virtual_terminal::TerminalEvent;
 use crate::backend::window::{WindowId, Windows};
-use crate::backend::yaml::models::{YamlSession, YamlWindow};
-use crate::backend::yaml::yaml_manager::YamlManager;
+use crate::backend::storage::session_files::{SessionFiles, SessionConfig, WindowConfig};
 use crate::backend::systemd::client::{SystemdClient, watch_events};
 use crate::ipc::consts::socket_path;
 use crate::ipc::server::run_server;
@@ -30,7 +29,7 @@ pub async fn run() -> Result<()> {
     let (terminal_events, mut terminal_event_receiver) = tokio::sync::mpsc::unbounded_channel();
     let terminals = Terminals::new(terminal_events);
     let sessions = Sessions::new();
-    let yaml_manager = YamlManager::new()?;
+    let files = SessionFiles::new()?;
 
     
 
@@ -39,7 +38,7 @@ pub async fn run() -> Result<()> {
         terminals,
         windows,
         sessions,
-        yaml_manager
+        files
     );
 
     info!(pid = std::process::id(), "Starting daemon");
@@ -100,7 +99,7 @@ impl Daemon {
         terminals: Terminals,
         windows: Windows,
         sessions: Sessions,
-        yaml_manager: YamlManager,
+        files: SessionFiles,
     ) -> Self {
         Self {
             runtime: SessionRuntime::new(
@@ -109,7 +108,7 @@ impl Daemon {
                 windows,
                 sessions,
             ),
-            store: SessionStore::new(yaml_manager),
+            store: SessionStore::new(files),
             changes: watch::Sender::new(0),
         }
     }
@@ -351,9 +350,9 @@ impl Daemon {
         // Validate the name and check it is free before writing anything to disk.
         let unit = self.new_service_unit(name.as_deref())?;
 
-        let yaml = YamlSession {
+        let yaml = SessionConfig {
             name: unit.as_str().to_owned(),
-            windows: vec![YamlWindow {
+            windows: vec![WindowConfig {
                 command,
                 working_directory: working_dir,
                 // A service runs its command; restart it when it exits.

@@ -8,7 +8,7 @@ use crate::backend::terminal::{TerminalId, Terminals};
 use crate::backend::window::{WindowId, Windows};
 use crate::backend::client_view::ClientView;
 use crate::backend::systemd::UnitName;
-use crate::backend::yaml::models::{YamlSession, YamlWindow};
+use crate::backend::storage::session_files::{SessionConfig, WindowConfig};
 use crate::ipc::protocol::{SessionInfo, SessionLookup, SysdWaitStatus, TerminalUpdate};
 use color_eyre::eyre::{OptionExt, Result, bail, eyre};
 
@@ -110,7 +110,7 @@ impl SessionRuntime {
     ///
     /// All or nothing: if one terminal cannot be created, the ones already spawned are
     /// torn down again.
-    pub fn spawn_windows(&mut self, windows: Vec<YamlWindow>, track: bool) -> Result<Vec<WindowId>> {
+    pub fn spawn_windows(&mut self, windows: Vec<WindowConfig>, track: bool) -> Result<Vec<WindowId>> {
         let mut spawned = Vec::with_capacity(windows.len());
         for window in windows {
             match self.spawn_window(&window.working_directory, Some(window.command), track, window.tracked) {
@@ -172,7 +172,7 @@ impl SessionRuntime {
     pub fn start_or_create_sysd_session(
         &mut self,
         name: UnitName,
-        windows: Vec<YamlWindow>,
+        windows: Vec<WindowConfig>,
     ) -> Result<RunId> {
         let existing = self.sessions.id_by_name(name.as_str());
         match existing {
@@ -423,7 +423,7 @@ impl SessionRuntime {
     }
 
     /// Builds the YAML representation of a running session. Does not write anything.
-    pub fn to_yaml(&self, id: SessionId) -> Result<YamlSession> {
+    pub fn to_yaml(&self, id: SessionId) -> Result<SessionConfig> {
         let session = self
             .sessions
             .get(id)
@@ -457,7 +457,7 @@ impl SessionRuntime {
                     .ok_or_else(missing_terminal)?;
                 let tracked = window.tracked || (infer_tracking && !command.trim().is_empty());
 
-                Ok(YamlWindow {
+                Ok(WindowConfig {
                     command,
                     working_directory,
                     tracked,
@@ -465,7 +465,7 @@ impl SessionRuntime {
             })
             .collect::<Result<_>>()?;
 
-        Ok(YamlSession {
+        Ok(SessionConfig {
             name: session.name.clone(),
             windows,
         })
