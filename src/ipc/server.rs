@@ -12,8 +12,9 @@ use tokio::sync::Mutex;
 
 use crate::backend::{
     daemon_manager::DaemonManager,
-    session_manager::{RunId, SessionId, UnitName},
-    systemd_client::SystemdClient,
+    session_manager::{RunId, SessionId},
+    systemd::UnitName,
+    systemd::client::SystemdClient,
     terminal_manager::TerminalId, window_manager::WindowId,
 };
 use crate::ipc::{

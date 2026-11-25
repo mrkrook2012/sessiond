@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use daemon_test::backend::client_view::ClientView;
-use daemon_test::backend::session_manager::{RunId, SessionId, SessionManager, UnitName};
+use daemon_test::backend::session_manager::{RunId, SessionId, SessionManager};
+use daemon_test::backend::systemd::UnitName;
 use daemon_test::backend::session_runtime::SessionRuntime;
 use daemon_test::backend::terminal_manager::{TerminalId, TerminalManager};
 use daemon_test::backend::virtual_terminal::TerminalEvent;

@@ -7,8 +7,7 @@ use tokio::sync::Mutex;
 use crate::backend::daemon_manager::DaemonManager;
 use crate::backend::client_view::ClientView;
 use crate::backend::session_manager::SessionManager;
-use crate::backend::systemd_client::{SystemdClient, watch_events};
-use crate::backend::systemd_service_manager::SystemdServiceManager;
+use crate::backend::systemd::client::{SystemdClient, watch_events};
 use crate::backend::terminal_manager::TerminalManager;
 use crate::backend::window_manager::WindowManager;
 use crate::backend::yaml::yaml_manager::YamlManager;
@@ -22,7 +21,6 @@ pub async fn run_daemon() -> Result<()> {
     let session_manager = SessionManager::new();
     let yaml_manager = YamlManager::new()?;
 
-    let systemd_manager = SystemdServiceManager::new();
     
 
     let mut daemon_manager = DaemonManager::new(
@@ -30,7 +28,6 @@ pub async fn run_daemon() -> Result<()> {
         terminal_manager,
         window_manager,
         session_manager,
-        systemd_manager,
         yaml_manager
     );
 

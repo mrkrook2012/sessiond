@@ -16,7 +16,7 @@ use zbus_systemd::systemd1::{ManagerProxy, UnitProxy};
 use zbus_systemd::zbus::{self, Connection, MatchRule, MessageStream, fdo::PropertiesChanged};
 
 use crate::backend::daemon_manager::DaemonManager;
-use crate::backend::session_manager::UnitName;
+use crate::backend::systemd::UnitName;
 
 /// Job mode for start/stop/restart. "replace" is what `systemctl` uses by default.
 const JOB_MODE: &str = "replace";

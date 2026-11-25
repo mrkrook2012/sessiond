@@ -2,11 +2,12 @@ use tracing::{info, warn};
 use std::time::Duration;
 
 use crate::backend::session_manager::{
-    RunId, SessionId, SessionKind, SessionManager, SessionState, UnitName,
+    RunId, SessionId, SessionKind, SessionManager, SessionState,
 };
 use crate::backend::terminal_manager::{TerminalId, TerminalManager};
 use crate::backend::window_manager::{WindowId, WindowManager};
 use crate::backend::client_view::ClientView;
+use crate::backend::systemd::UnitName;
 use crate::backend::yaml::models::{YamlSession, YamlWindow};
 use crate::ipc::protocol::{SessionInfo, SessionLookup, SysdWaitStatus, TerminalUpdate};
 use color_eyre::eyre::{OptionExt, Result, bail, eyre};

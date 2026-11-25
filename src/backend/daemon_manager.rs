@@ -4,10 +4,10 @@ use std::path::PathBuf;
 use crate::backend::client_view::ClientView;
 use tokio::sync::watch;
 
-use crate::backend::session_manager::{RunId, SessionId, SessionManager, UnitName};
+use crate::backend::session_manager::{RunId, SessionId, SessionManager};
+use crate::backend::systemd::UnitName;
 use crate::backend::session_runtime::SessionRuntime;
 use crate::backend::session_store::SessionStore;
-use crate::backend::systemd_service_manager::SystemdServiceManager;
 use crate::backend::terminal_manager::{TerminalId, TerminalManager};
 use crate::backend::virtual_terminal::TerminalEvent;
 use crate::backend::window_manager::{WindowId, WindowManager};
@@ -33,7 +33,6 @@ impl DaemonManager {
         terminal_manager: TerminalManager,
         window_manager: WindowManager,
         session_manager: SessionManager,
-        systemd_manager: SystemdServiceManager,
         yaml_manager: YamlManager,
     ) -> Self {
         Self {
@@ -43,7 +42,7 @@ impl DaemonManager {
                 window_manager,
                 session_manager,
             ),
-            store: SessionStore::new(yaml_manager, systemd_manager),
+            store: SessionStore::new(yaml_manager),
             changes: watch::Sender::new(0),
         }
     }

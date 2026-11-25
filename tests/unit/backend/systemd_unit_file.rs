@@ -1,17 +1,17 @@
 use std::fs;
 use std::path::Path;
 
-use daemon_test::backend::session_manager::UnitName;
-use daemon_test::backend::systemd_manager::{RestartPolicy, SystemdManager};
+use daemon_test::backend::systemd::UnitName;
+use daemon_test::backend::systemd::unit_file::{self, RestartPolicy};
 use tempfile::TempDir;
 
 /// Writes a unit for `name` into a temp dir and returns (dir, unit file contents).
 fn write_unit(name: &str) -> (TempDir, String) {
     let dir = TempDir::new().unwrap();
-    SystemdManager::write_default_template_to_path(
+    unit_file::write_to(
+        dir.path(),
         Path::new("/data/My Session.yaml"),
         "alice",
-        dir.path(),
         &UnitName::new(name).unwrap(),
     )
     .unwrap();
@@ -84,6 +84,6 @@ fn restart_policies_use_systemd_spelling() {
 
 #[test]
 fn unit_file_path_is_inside_unit_dir() {
-    let path = SystemdManager::unit_file_path("svc").unwrap();
-    assert_eq!(path, SystemdManager::unit_dir().unwrap().join("svc.service"));
+    let path = unit_file::path(&UnitName::new("svc").unwrap()).unwrap();
+    assert_eq!(path, unit_file::dir().unwrap().join("svc.service"));
 }

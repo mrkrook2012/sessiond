@@ -5,7 +5,7 @@ mod name_match;
 mod session_manager;
 mod session_runtime;
 mod systemd_client;
-mod systemd_manager;
+mod systemd_unit_file;
 mod terminal_manager;
 mod virtual_terminal;
 mod window_manager;

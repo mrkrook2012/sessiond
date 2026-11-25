@@ -6,8 +6,8 @@ use std::path::PathBuf;
 
 use daemon_test::backend::daemon_manager::DaemonManager;
 use daemon_test::backend::client_view::ClientView;
-use daemon_test::backend::session_manager::{RunId, SessionId, SessionManager, UnitName};
-use daemon_test::backend::systemd_service_manager::SystemdServiceManager;
+use daemon_test::backend::session_manager::{RunId, SessionId, SessionManager};
+use daemon_test::backend::systemd::UnitName;
 use daemon_test::backend::terminal_manager::TerminalManager;
 use daemon_test::backend::virtual_terminal::TerminalEvent;
 use daemon_test::backend::window_manager::WindowManager;
@@ -34,7 +34,6 @@ impl Fixture {
             TerminalManager::new(events_tx),
             WindowManager::new(),
             SessionManager::new(),
-            SystemdServiceManager::new(),
             YamlManager::with_dir(dir.path().join("data")).unwrap(),
         );
         Self { dir, manager, events }

@@ -2,9 +2,8 @@ use tracing::{debug, info, warn};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
  
-use crate::backend::session_manager::UnitName;
-use crate::backend::systemd_manager::SystemdManager;
-use crate::backend::systemd_service_manager::SystemdServiceManager;
+use crate::backend::systemd::UnitName;
+use crate::backend::systemd::unit_file;
 use crate::backend::yaml::models::YamlSession;
 use crate::backend::yaml::yaml_manager::YamlManager;
 use color_eyre::eyre::Result;
@@ -13,17 +12,15 @@ use color_eyre::eyre::Result;
 /// It knows nothing about live terminals or windows.
 pub struct SessionStore {
     yaml_manager: YamlManager,
-    systemd_manager: SystemdServiceManager,
     /// The YAML file each sysd session was last started from: the one its unit's
     /// `ExecStart` points at, and so the one an update must overwrite.
     sysd_configs: HashMap<UnitName, PathBuf>,
 }
 
 impl SessionStore {
-    pub fn new(yaml_manager: YamlManager, systemd_manager: SystemdServiceManager) -> Self {
+    pub fn new(yaml_manager: YamlManager) -> Self {
         Self {
             yaml_manager,
-            systemd_manager,
             sysd_configs: HashMap::new(),
         }
     }
@@ -63,7 +60,7 @@ impl SessionStore {
  
     /// Writes the unit file. The caller must reload systemd afterwards.
     pub fn create_service(&mut self, yaml_path: &Path, unit: &UnitName) -> Result<()> {
-        self.systemd_manager.create_service_from_yaml(yaml_path, unit)
+        unit_file::create(yaml_path, unit)
     }
  
     /// Finds sysd sessions that exist on disk (YAML + unit file) so they can be
@@ -91,7 +88,7 @@ impl SessionStore {
                 }
             };
 
-            if !self.systemd_manager.unit_file_exists(&unit) {
+            if !unit_file::exists(&unit) {
                 // Normal for exported sessions that were never turned into a service.
                 debug!("Skipping {}: no unit file for '{}'", path.display(), unit);
                 continue;
@@ -109,7 +106,7 @@ impl SessionStore {
     }
 
     pub fn unit_file_exists(&self, unit: &UnitName) -> bool {
-        self.systemd_manager.unit_file_exists(unit)
+        unit_file::exists(unit)
     }
 
     /// Removes the unit file and every YAML file of this session. Files that are already
@@ -117,8 +114,8 @@ impl SessionStore {
     /// Returns the files that were removed.
     pub fn delete(&mut self, unit: &UnitName) -> Result<Vec<PathBuf>> {
         let mut files = self.yaml_manager.find_session_files(unit.as_str())?;
-        if self.systemd_manager.unit_file_exists(unit) {
-            files.push(SystemdManager::unit_file_path(unit.as_str())?);
+        if unit_file::exists(unit) {
+            files.push(unit_file::path(unit)?);
         }
 
         for file in &files {
