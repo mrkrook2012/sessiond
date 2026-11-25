@@ -1,9 +1,9 @@
 //! Talks to the user's systemd instance over D-Bus, instead of shelling out to `systemctl`.
 //!
 //! Two parts:
-//! - `SystemdClient`: thin async wrapper over the `org.freedesktop.systemd1.Manager` calls we use.
+//! - `SysdClient`: thin async wrapper over the `org.freedesktop.systemd1.Manager` calls we use.
 //! - `watch_events`: a background task that listens for systemd signals and keeps the
-//!   sysd sessions in `DaemonManager` in sync with what systemd reports, so a plain
+//!   sysd sessions in `Daemon` in sync with what systemd reports, so a plain
 //!   `systemctl --user disable foo` or `systemctl --user stop foo` is reflected in the daemon.
 
 use tracing::{debug, trace, warn};
@@ -15,8 +15,8 @@ use tokio::sync::Mutex;
 use zbus_systemd::systemd1::{ManagerProxy, UnitProxy};
 use zbus_systemd::zbus::{self, Connection, MatchRule, MessageStream, fdo::PropertiesChanged};
 
-use crate::backend::deamon_manager::DaemonManager;
-use crate::backend::session_manager::UnitName;
+use crate::backend::daemon::Daemon;
+use crate::backend::sysd::UnitName;
 
 /// Job mode for start/stop/restart. "replace" is what `systemctl` uses by default.
 const JOB_MODE: &str = "replace";
@@ -25,11 +25,11 @@ const UNIT_PATH_PREFIX: &str = "/org/freedesktop/systemd1/unit/";
 const UNIT_INTERFACE: &str = "org.freedesktop.systemd1.Unit";
 
 #[derive(Clone)]
-pub struct SystemdClient {
+pub struct SysdClient {
     manager: ManagerProxy<'static>,
 }
 
-impl SystemdClient {
+impl SysdClient {
     /// Connects to the user's session bus (the bus the `systemd --user` instance lives on).
     pub async fn connect() -> Result<Self> {
         let connection = Connection::session()
@@ -160,12 +160,12 @@ fn service_name(unit: &UnitName) -> String {
 ///   re-read the enabled state of every sysd session.
 /// - `PropertiesChanged` on a unit's `ActiveState`: if one of our units went `inactive` or
 ///   `failed`, tear down its windows. Starting is not handled here, because `ExecStart`
-///   already tells the daemon via `__internal-systemd-start`.
+///   already tells the daemon via `__internal-sysd-start`.
 ///
 /// Signals arrive on their own connection. zbus stops reading a connection while any of
 /// its signal streams is full, so sharing one with method calls lets a burst of unit
 /// signals block the replies we are waiting for (including the ones this loop awaits).
-pub async fn watch_events(client: SystemdClient, manager: Arc<Mutex<DaemonManager>>) -> Result<()> {
+pub async fn watch_events(client: SysdClient, daemon: Arc<Mutex<Daemon>>) -> Result<()> {
     let signal_connection = Connection::session()
         .await
         .wrap_err("Failed to open D-Bus connection for systemd signals")?;
@@ -194,20 +194,20 @@ pub async fn watch_events(client: SystemdClient, manager: Arc<Mutex<DaemonManage
     debug!("Watching systemd signals");
 
     // Units registered from disk at startup do not know their enabled state yet.
-    refresh_enabled(&client, &manager).await;
+    refresh_enabled(&client, &daemon).await;
 
     loop {
         tokio::select! {
-            Some(_) = unit_files_changed.next() => refresh_enabled(&client, &manager).await,
+            Some(_) = unit_files_changed.next() => refresh_enabled(&client, &daemon).await,
             Some(signal) = reloading.next() => {
                 // Fires with `true` when a reload starts and `false` when it is done.
                 if matches!(signal.args().map(|args| args.active), Ok(false)) {
-                    refresh_enabled(&client, &manager).await;
+                    refresh_enabled(&client, &daemon).await;
                 }
             }
             Some(message) = unit_properties.next() => {
                 if let Ok(message) = message {
-                    handle_properties_changed(message, &manager).await;
+                    handle_properties_changed(message, &daemon).await;
                 }
             }
             else => break,
@@ -218,22 +218,22 @@ pub async fn watch_events(client: SystemdClient, manager: Arc<Mutex<DaemonManage
     Ok(())
 }
 
-async fn refresh_enabled(client: &SystemdClient, manager: &Arc<Mutex<DaemonManager>>) {
+async fn refresh_enabled(client: &SysdClient, daemon: &Arc<Mutex<Daemon>>) {
     // Do not hold the lock across D-Bus calls.
-    let units = manager.lock().await.sysd_units();
+    let units = daemon.lock().await.sysd_units();
 
     for unit in units {
         match client.is_enabled(&unit).await {
             Ok(enabled) => {
                 trace!(unit = %unit, enabled, "Refreshed enabled state");
-                manager.lock().await.set_sysd_enabled(&unit, enabled)
+                daemon.lock().await.set_sysd_enabled(&unit, enabled)
             }
             Err(e) => warn!("{e:#}"),
         }
     }
 }
 
-async fn handle_properties_changed(message: zbus::Message, manager: &Arc<Mutex<DaemonManager>>) {
+async fn handle_properties_changed(message: zbus::Message, daemon: &Arc<Mutex<Daemon>>) {
     let Some(unit) = message
         .header()
         .path()
@@ -258,7 +258,7 @@ async fn handle_properties_changed(message: zbus::Message, manager: &Arc<Mutex<D
     trace!(unit = %unit, %active_state, "Unit state changed");
 
     if matches!(active_state.as_str(), "inactive" | "failed") {
-        manager.lock().await.handle_unit_deactivated(&unit);
+        daemon.lock().await.handle_unit_deactivated(&unit);
     }
 }
 

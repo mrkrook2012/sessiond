@@ -1,14 +1,15 @@
 use std::time::Duration;
 
-use daemon_test::backend::mini_user_manager::MiniUserManager;
-use daemon_test::backend::session_manager::{RunId, SessionId, SessionManager, UnitName};
+use daemon_test::backend::client_view::ClientView;
+use daemon_test::backend::session::Sessions;
+use daemon_test::backend::sysd::UnitName;
 use daemon_test::backend::session_runtime::SessionRuntime;
-use daemon_test::backend::terminal_manager::{TerminalId, TerminalManager};
-use daemon_test::backend::virtual_terminal::TerminalEvent;
-use daemon_test::backend::window_manager::WindowManager;
-use daemon_test::backend::yaml::models::YamlWindow;
+use daemon_test::backend::terminal::Terminals;
+use daemon_test::backend::terminal::virtual_terminal::TerminalEvent;
+use daemon_test::backend::window::Windows;
+use daemon_test::backend::storage::session_files::WindowConfig;
 use daemon_test::ipc::protocol::{SessionInfo, SysdWaitStatus};
-use daemon_test::backend::guid::Guid;
+use daemon_test::ids::{Guid, RunId, SessionId, TerminalId};
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use crate::support::{eventually, screen_text};
@@ -16,16 +17,16 @@ use crate::support::{eventually, screen_text};
 fn runtime() -> (SessionRuntime, UnboundedReceiver<TerminalEvent>) {
     let (events, receiver) = unbounded_channel();
     let runtime = SessionRuntime::new(
-        MiniUserManager::new(),
-        TerminalManager::new(events),
-        WindowManager::new(),
-        SessionManager::new(),
+        ClientView::new(),
+        Terminals::new(events),
+        Windows::new(),
+        Sessions::new(),
     );
     (runtime, receiver)
 }
 
-fn window(command: &str, tracked: bool) -> YamlWindow {
-    YamlWindow {
+fn window(command: &str, tracked: bool) -> WindowConfig {
+    WindowConfig {
         command: command.to_string(),
         working_directory: "/tmp".to_string(),
         tracked,
@@ -36,7 +37,7 @@ fn next_event(receiver: &mut UnboundedReceiver<TerminalEvent>) -> TerminalEvent 
     eventually("terminal event", || receiver.try_recv().ok())
 }
 
-fn start_sysd(runtime: &mut SessionRuntime, windows: Vec<YamlWindow>) -> RunId {
+fn start_sysd(runtime: &mut SessionRuntime, windows: Vec<WindowConfig>) -> RunId {
     runtime
         .start_or_create_sysd_session(UnitName::new("svc").unwrap(), windows)
         .unwrap()
@@ -186,7 +187,7 @@ fn spawned_windows_run_in_their_working_directory() {
     let (mut runtime, _events) = runtime();
     let windows = runtime.spawn_windows(
         vec![
-            YamlWindow { command: "sleep 300".into(), working_directory: "/".into(), tracked: false },
+            WindowConfig { command: "sleep 300".into(), working_directory: "/".into(), tracked: false },
             window("sleep 301", false),
         ],
         false,

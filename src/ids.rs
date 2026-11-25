@@ -1,6 +1,8 @@
 //! Globally unique identifiers for everything the daemon creates (sessions, windows,
 //! terminals and runs of sysd sessions).
 //!
+//! These types are shared by the daemon, the IPC protocol and the frontend.
+//!
 //! IDs are never reused: an event that arrives late for something that is already gone
 //! (a tracked command's exit, a waiter for an old run) can never be mistaken for
 //! something new that happens to have been handed the same ID.
@@ -11,12 +13,29 @@ use std::fmt;
 use bincode_next::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
+/// A session: a named group of windows, ephemeral or backed by a systemd unit.
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, Encode, Decode, Serialize, Deserialize)]
+pub struct SessionId(pub Guid);
+
+/// A window of a session. Every window shows exactly one terminal.
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, Encode, Decode, Serialize, Deserialize)]
+pub struct WindowId(pub Guid);
+
+/// A terminal: a PTY with a shell in it.
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, Encode, Decode, Serialize, Deserialize)]
+pub struct TerminalId(pub Guid);
+
+/// Identifies one start of a sysd session, so a waiter from a previous run
+/// never mistakes the next run's state for its own.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Encode, Decode, Serialize, Deserialize)]
+pub struct RunId(pub Guid);
+
 /// A random (version 4) UUID.
 #[derive(Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, Encode, Decode, Serialize, Deserialize)]
 pub struct Guid(u128);
 
 impl Guid {
-    /// The all-zero GUID. `GuidManager` never generates it, so it can stand for "none".
+    /// The all-zero GUID. `GuidGenerator` never generates it, so it can stand for "none".
     pub const NIL: Guid = Guid(0);
 
     const VERSION_MASK: u128 = 0xF << 76;
@@ -63,26 +82,26 @@ impl fmt::Debug for Guid {
     }
 }
 
-/// Hands out GUIDs that are guaranteed to be unique among everything this manager has
+/// Hands out GUIDs that are guaranteed to be unique among everything this generator has
 /// ever issued.
 ///
 /// GUIDs come from the thread-local CSPRNG, so a collision is already astronomically
-/// unlikely; the manager additionally remembers every GUID it issued and draws again on
+/// unlikely; the generator additionally remembers every GUID it issued and draws again on
 /// a clash, which turns "unlikely" into "impossible". GUIDs are never released, so one is
 /// never handed out twice, not even after the thing it named is gone. Remembering them
 /// costs a few dozen bytes per ID, which is nothing for the number of sessions,
 /// windows and terminals a daemon creates.
 #[derive(Default)]
-pub struct GuidManager {
+pub struct GuidGenerator {
     issued: HashSet<Guid>,
 }
 
-impl GuidManager {
+impl GuidGenerator {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// A GUID this manager has never issued before.
+    /// A GUID this generator has never issued before.
     pub fn generate(&mut self) -> Guid {
         loop {
             let guid = Guid::random();

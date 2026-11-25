@@ -1,49 +1,115 @@
-use tracing::{debug, info, warn};
+//! The daemon: its state (`Daemon`) and the task that runs it (`run`).
+
+use tracing::{debug, error, info, warn};
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use crate::backend::mini_user_manager::MiniUserManager;
-use tokio::sync::watch;
+use crate::backend::client_view::ClientView;
+use tokio::sync::{Mutex, watch};
 
-use crate::backend::session_manager::{RunId, SessionId, SessionManager, UnitName};
+use crate::backend::session::Sessions;
+use crate::backend::sysd::UnitName;
 use crate::backend::session_runtime::SessionRuntime;
-use crate::backend::session_store::SessionStore;
-use crate::backend::systemd_service_manager::SystemdServiceManager;
-use crate::backend::terminal_manager::{TerminalId, TerminalManager};
-use crate::backend::virtual_terminal::TerminalEvent;
-use crate::backend::window_manager::{WindowId, WindowManager};
-use crate::backend::yaml::models::{YamlSession, YamlWindow};
-use crate::backend::yaml::yaml_manager::YamlManager;
+use crate::backend::storage::SessionStore;
+use crate::backend::terminal::Terminals;
+use crate::backend::terminal::virtual_terminal::TerminalEvent;
+use crate::backend::window::Windows;
+use crate::ids::{RunId, SessionId, TerminalId, WindowId};
+use crate::backend::storage::session_files::{SessionFiles, SessionConfig, WindowConfig};
+use crate::backend::sysd::client::{SysdClient, watch_events};
 use crate::ipc::consts::socket_path;
+use crate::ipc::server::run_server;
 use crate::ipc::protocol::{SessionInfo, SessionLookup, SysdWaitStatus, TerminalUpdate};
 use color_eyre::eyre::{Result, bail};
+
+/// Runs the daemon until it is killed: restores stored sysd sessions, starts the
+/// terminal-event and systemd watchers and serves IPC requests.
+pub async fn run() -> Result<()> {
+    let view = ClientView::new();
+    let windows = Windows::new();
+    let (terminal_events, mut terminal_event_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let terminals = Terminals::new(terminal_events);
+    let sessions = Sessions::new();
+    let files = SessionFiles::new()?;
+
+    
+
+    let mut daemon = Daemon::new(
+        view,
+        terminals,
+        windows,
+        sessions,
+        files
+    );
+
+    info!(pid = std::process::id(), "Starting daemon");
+
+    // Pick up sysd sessions that exist on disk but were never started by this daemon.
+    // A failure here should not keep the daemon from starting.
+    match daemon.register_stored_sysd_sessions() {
+        Ok(count) => info!("Registered {count} stored sysd session(s)"),
+        Err(e) => error!("Failed to scan for stored sysd sessions: {e:#}"),
+    }
+
+    let daemon = Arc::new(Mutex::new(daemon));
+
+    // Events from terminals (tracked commands exiting) are applied here, outside the PTY threads.
+    let event_daemon = daemon.clone();
+    tokio::spawn(async move {
+        while let Some(event) = terminal_event_receiver.recv().await {
+            event_daemon.lock().await.handle_terminal_event(event);
+        }
+    });
+
+    // Without a session bus (CI, containers) the daemon still works; sysd actions just fail.
+    let sysd = match SysdClient::connect().await {
+        Ok(client) => {
+            let watcher_client = client.clone();
+            let watcher_daemon = daemon.clone();
+            tokio::spawn(async move {
+                if let Err(e) = watch_events(watcher_client, watcher_daemon).await {
+                    error!("systemd event watcher stopped: {e:#}");
+                }
+            });
+            Some(client)
+        }
+        Err(e) => {
+            warn!("systemd integration disabled: {e:#}");
+            None
+        }
+    };
+
+    run_server(daemon, sysd).await?;
+
+    Ok(())
+}
 
 /// Entry point for IPC requests. Holds no logic of its own beyond coordinating:
 /// - `runtime`: live terminals / windows / sessions
 /// - `store`:   YAML files and systemd units
-pub struct DaemonManager {
+pub struct Daemon {
     runtime: SessionRuntime,
     store: SessionStore,
     /// Bumped whenever something a `wait_sysd_session` caller cares about may have changed.
     changes: watch::Sender<u64>,
 }
 
-impl DaemonManager {
+impl Daemon {
     pub fn new(
-        user_manager: MiniUserManager,
-        terminal_manager: TerminalManager,
-        window_manager: WindowManager,
-        session_manager: SessionManager,
-        systemd_manager: SystemdServiceManager,
-        yaml_manager: YamlManager,
+        view: ClientView,
+        terminals: Terminals,
+        windows: Windows,
+        sessions: Sessions,
+        files: SessionFiles,
     ) -> Self {
         Self {
             runtime: SessionRuntime::new(
-                user_manager,
-                terminal_manager,
-                window_manager,
-                session_manager,
+                view,
+                terminals,
+                windows,
+                sessions,
             ),
-            store: SessionStore::new(yaml_manager, systemd_manager),
+            store: SessionStore::new(files),
             changes: watch::Sender::new(0),
         }
     }
@@ -193,7 +259,7 @@ impl DaemonManager {
     }
 
     /// Starts (or restarts) a sysd session from its YAML. Returns the id of this run,
-    /// which `__internal-systemd-start` then waits on.
+    /// which `__internal-sysd-start` then waits on.
     pub fn handle_start_sysd_session_from_file(&mut self, file_path: PathBuf) -> Result<RunId> {
         let yaml = self.store.load(&file_path)?;
         let name = UnitName::new(&yaml.name)?;
@@ -237,8 +303,8 @@ impl DaemonManager {
 
     /// The unit a new service called `name` would get, checked against everything the
     /// daemon knows: the name is valid and no session uses it. Whether systemd already has
-    /// a unit by that name is asked separately (`SystemdClient::ensure_unit_name_free`),
-    /// because that is a D-Bus call and must not be made while holding the manager lock.
+    /// a unit by that name is asked separately (`SysdClient::ensure_unit_name_free`),
+    /// because that is a D-Bus call and must not be made while holding the daemon lock.
     pub fn new_service_unit(&self, name: Option<&str>) -> Result<UnitName> {
         let Some(name) = name else {
             bail!("A service needs a name");
@@ -285,9 +351,9 @@ impl DaemonManager {
         // Validate the name and check it is free before writing anything to disk.
         let unit = self.new_service_unit(name.as_deref())?;
 
-        let yaml = YamlSession {
+        let yaml = SessionConfig {
             name: unit.as_str().to_owned(),
-            windows: vec![YamlWindow {
+            windows: vec![WindowConfig {
                 command,
                 working_directory: working_dir,
                 // A service runs its command; restart it when it exits.
@@ -368,11 +434,11 @@ impl DaemonManager {
 
     /// Stops the daemon and every process it started.
     ///
-    /// The socket file goes first: a waiting `__internal-systemd-start` that loses its
+    /// The socket file goes first: a waiting `__internal-sysd-start` that loses its
     /// connection checks for it to tell this requested shutdown from a crash (and only
-    /// fails, making systemd restart it, on a crash). Holding the manager lock throughout
+    /// fails, making systemd restart it, on a crash). Holding the daemon lock throughout
     /// also keeps tracked commands that die below from being reported as exits.
-    pub fn handle_kill_deamon(&mut self) -> ! {
+    pub fn handle_kill_daemon(&mut self) -> ! {
         info!("Shutdown requested");
         if let Err(e) = std::fs::remove_file(socket_path()) {
             warn!("Failed to remove socket {}: {e}", socket_path().display());

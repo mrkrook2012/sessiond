@@ -5,4 +5,5 @@
 
 mod backend;
 mod cli;
+mod ids;
 mod support;

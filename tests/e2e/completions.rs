@@ -46,7 +46,7 @@ fn fish_completions() {
         eprintln!("skipping: fish not installed");
         return;
     }
-    let h = Harness::with_isolated_systemd();
+    let h = Harness::with_isolated_sysd();
 
     let script = h.dir.path().join("daemon_test.fish");
     fs::write(&script, h.ok(&["completions", "fish"])).unwrap();
@@ -66,7 +66,7 @@ fn fish_completions() {
         "name: svc\nwindows:\n- command: sleep 1\n  working_directory: /tmp\n",
     )
     .unwrap();
-    fs::write(h.systemd_dir().join("svc.service"), "[Unit]\n").unwrap();
+    fs::write(h.sysd_dir().join("svc.service"), "[Unit]\n").unwrap();
     h.ok(&["run", "-n", "eph", "sleep", "300"]);
 
     let mut attach = fish_complete(&h, &script, "daemon_test attach ");

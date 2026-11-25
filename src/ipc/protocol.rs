@@ -2,11 +2,7 @@ use bincode_next::{Decode, Encode};
 use serde::Serialize;
 use std::path::PathBuf;
 
-use crate::backend::{
-    session_manager::SessionId,
-    terminal_manager::TerminalId,
-    window_manager::WindowId,
-};
+use crate::ids::{SessionId, TerminalId, WindowId};
 
 // TODO remove SessionId from protocol, should be string, we'll parse it later.
 #[derive(Decode, Encode, Debug, Serialize, serde::Deserialize)]

@@ -33,30 +33,30 @@ fn systemctl(args: &[&str]) {
 }
 
 #[test]
-fn systemd_round_trip() {
-    if !user_systemd_available() {
+fn sysd_round_trip() {
+    if !user_sysd_available() {
         eprintln!("skipping: no user systemd instance");
         return;
     }
     let h = Harness::new();
-    h.ok(&["run", "--systemd", "--name", "testing101", "echo test"]);
+    h.ok(&["run", "--sysd", "--name", "testing101", "echo test"]);
 
     h.ok(&["service", "delete", "testing101"]);
 
-    h.ok(&["run", "--systemd", "--name", "testing101", "echo test"]);
+    h.ok(&["run", "--sysd", "--name", "testing101", "echo test"]);
 
     h.ok(&["service", "delete", "testing101"]);
 }
 
 #[test]
 fn stored_sysd_sessions_are_registered_on_daemon_start() {
-    let h = Harness::with_isolated_systemd();
+    let h = Harness::with_isolated_sysd();
 
     let yaml = session_yaml;
 
     // A sysd session that was created but never started: YAML + unit file.
     fs::write(h.data_dir().join("stale.yaml"), yaml("stale")).unwrap();
-    fs::write(h.systemd_dir().join("stale.service"), "[Unit]\n").unwrap();
+    fs::write(h.sysd_dir().join("stale.service"), "[Unit]\n").unwrap();
 
     // YAML without a unit file is not a sysd session.
     fs::write(h.data_dir().join("orphan.yaml"), yaml("orphan")).unwrap();
@@ -76,12 +76,12 @@ fn stored_sysd_sessions_are_registered_on_daemon_start() {
 
     assert_eq!(h.sessions(), vec!["eph"]);
     assert!(!h.data_dir().join("stale.yaml").exists());
-    assert!(!h.systemd_dir().join("stale.service").exists());
+    assert!(!h.sysd_dir().join("stale.service").exists());
 }
 
 #[test]
 fn external_systemctl_changes_are_tracked() {
-    if !user_systemd_available() {
+    if !user_sysd_available() {
         eprintln!("skipping: no user systemd instance");
         return;
     }
@@ -89,7 +89,7 @@ fn external_systemctl_changes_are_tracked() {
     // Unique per run so parallel or leftover units never collide.
     let name = format!("dtest-events-{}", std::process::id());
 
-    h.ok(&["run", "--systemd", "--name", &name, "sleep", "300"]);
+    h.ok(&["run", "--sysd", "--name", &name, "sleep", "300"]);
     wait_for_list_line(&h, &name, "running", |l| l.contains("running"));
 
     // Plain systemctl, not our CLI: the daemon must learn about it from systemd's signals.
@@ -112,9 +112,9 @@ fn external_systemctl_changes_are_tracked() {
 
 #[test]
 fn service_delete_removes_service_and_yaml_files() {
-    let h = Harness::with_isolated_systemd();
+    let h = Harness::with_isolated_sysd();
     let data = h.data_dir();
-    let units = h.systemd_dir();
+    let units = h.sysd_dir();
 
     let yaml = session_yaml;
 
@@ -174,7 +174,7 @@ fn n_restarts(unit: &str) -> u32 {
 
 #[test]
 fn tracked_service_restarts_when_its_command_exits() {
-    if !user_systemd_available() {
+    if !user_sysd_available() {
         eprintln!("skipping: no user systemd instance");
         return;
     }
@@ -183,7 +183,7 @@ fn tracked_service_restarts_when_its_command_exits() {
     let unit = format!("{name}.service");
 
     // `run --systemd` tracks its command, so this exits after a second and should restart.
-    h.ok(&["run", "--systemd", "--name", &name, "sleep", "1"]);
+    h.ok(&["run", "--sysd", "--name", &name, "sleep", "1"]);
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     while n_restarts(&unit) < 1 {
@@ -214,9 +214,9 @@ fn service_commands_on_unknown_session_fail() {
 
 #[test]
 fn list_services_shows_only_sysd_sessions_with_their_state() {
-    let h = Harness::with_isolated_systemd();
+    let h = Harness::with_isolated_sysd();
     fs::write(h.data_dir().join("svc.yaml"), session_yaml("svc")).unwrap();
-    fs::write(h.systemd_dir().join("svc.service"), "[Unit]\n").unwrap();
+    fs::write(h.sysd_dir().join("svc.service"), "[Unit]\n").unwrap();
     h.ok(&["run", "-n", "eph", "sleep", "300"]);
 
     assert_eq!(h.ok(&["list", "--services", "--names"]), "svc\n");
@@ -227,7 +227,7 @@ fn list_services_shows_only_sysd_sessions_with_their_state() {
 #[test]
 fn internal_stop_without_daemon_succeeds_and_does_not_start_one() {
     let h = Harness::new();
-    h.ok(&["__internal-systemd-stop", "anything"]);
+    h.ok(&["__internal-sysd-stop", "anything"]);
     h.fails(&["daemon", "status"]);
 }
 
@@ -235,7 +235,7 @@ fn internal_stop_without_daemon_succeeds_and_does_not_start_one() {
 fn internal_stop_of_unknown_session_succeeds() {
     let h = Harness::new();
     h.ok(&["run", "-n", "eph", "sleep", "300"]);
-    h.ok(&["__internal-systemd-stop", "nope"]);
+    h.ok(&["__internal-sysd-stop", "nope"]);
     assert_eq!(h.sessions(), vec!["eph"]);
 }
 
@@ -243,7 +243,7 @@ fn internal_stop_of_unknown_session_succeeds() {
 fn internal_start_with_missing_config_fails() {
     let h = Harness::new();
     let missing = h.dir.path().join("missing.yaml");
-    let err = h.fails(&["__internal-systemd-start", missing.to_str().unwrap()]);
+    let err = h.fails(&["__internal-sysd-start", missing.to_str().unwrap()]);
     assert!(err.contains("Failed to get absolute path"), "got: {err}");
     // It checks the file before starting the daemon.
     h.fails(&["daemon", "status"]);
@@ -256,7 +256,7 @@ fn internal_stop_of_an_ephemeral_session_leaves_it_alone() {
     let h = Harness::new();
     h.ok(&["run", "-n", "eph", "sleep", "300"]);
 
-    let err = h.fails(&["__internal-systemd-stop", "eph"]);
+    let err = h.fails(&["__internal-sysd-stop", "eph"]);
     assert!(err.contains("non sysd session") || err.contains("non-sysd session"), "got: {err}");
 
     assert_eq!(h.sessions(), vec!["eph"]);
@@ -285,20 +285,20 @@ impl Drop for TransientUnit {
 
 #[test]
 fn services_cannot_take_a_name_systemd_already_uses() {
-    if !user_systemd_available() {
+    if !user_sysd_available() {
         eprintln!("skipping: no user systemd instance");
         return;
     }
     // Isolated, so even if the check failed no unit file would reach systemd's search path.
-    let h = Harness::with_isolated_systemd();
+    let h = Harness::with_isolated_sysd();
     let name = format!("daemon-test-taken-{}", std::process::id());
     let unit = TransientUnit::start(&name);
 
-    let err = h.fails(&["run", "--systemd", "--name", &name, "sleep", "1"]);
+    let err = h.fails(&["run", "--sysd", "--name", &name, "sleep", "1"]);
     assert!(err.contains("already has a unit"), "got: {err}");
     assert!(h.sessions().is_empty());
-    assert!(!h.systemd_dir().join(format!("{name}.service")).exists());
+    assert!(!h.sysd_dir().join(format!("{name}.service")).exists());
     assert!(!h.data_dir().join(format!("{name}.yaml")).exists());
     drop(unit);
-    // Free names pass the check: see `systemd_round_trip`, which uses the real unit dir.
+    // Free names pass the check: see `sysd_round_trip`, which uses the real unit dir.
 }
