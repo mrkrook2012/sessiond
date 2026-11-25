@@ -44,13 +44,13 @@ sessions.
 
 ### Sessions
 
-| Command                               | Description                                                                                                                                                                        |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Command                               | Description                                                                                                                                                                                                             |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `run [--sysd] [-n NAME] <command>...` | Start a new session running `<command>`. With `--sysd` (alias `--systemd`) it becomes a systemd service instead of an ephemeral session. Without `--name` it gets a random name like `banana-harbor`, which is printed. |
-| `list [--names] [--services]`         | List active sessions. `--names` prints names only, one per line; `--services` shows only systemd-backed sessions.                                                                  |
-| `attach <name>`                       | Open the TUI on just that session. Detaching (`Ctrl-b d`) or the session ending exits back to your shell. |
-| `kill <name>`                         | Kill a session.                                                                                                                                                                    |
-| `kill --all`                          | Kill every active session.                                                                                                                                                         |
+| `list [--names] [--services]`         | List active sessions. `--names` prints names only, one per line; `--services` shows only systemd-backed sessions.                                                                                                       |
+| `attach <name>`                       | Open the TUI on just that session. Detaching (`Ctrl-b d`) or the session ending exits back to your shell.                                                                                                               |
+| `kill <name>`                         | Kill a session.                                                                                                                                                                                                         |
+| `kill --all`                          | Kill every active session.                                                                                                                                                                                              |
 
 `run` takes either a single shell command line or a command with arguments:
 
@@ -118,13 +118,13 @@ CLI commands log to stderr; under systemd that ends up in the journal
 
 ## Files and environment
 
-| Path / variable                         | Purpose                                                                                       |
-| --------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `/tmp/sessiond.sock`                    | Daemon socket. Override with `SESSIOND_SOCKET`.                                               |
-| `~/.config/systemd/user/<name>.service` | Generated unit files.                                                                         |
-| `~/.local/share/sessiond/<name>.yaml`   | Session files for services.                                                                   |
-| `~/.local/state/sessiond/daemon.log`   | Log of the background daemon (stdout, stderr and panics).                                     |
-| `~/.local/state/sessiond/frontend.log` | Log of the TUI.                                                                               |
+| Path / variable                         | Purpose                                                                                            |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `/tmp/sessiond.sock`                    | Daemon socket. Override with `SESSIOND_SOCKET`.                                                    |
+| `~/.config/systemd/user/<name>.service` | Generated unit files.                                                                              |
+| `~/.local/share/sessiond/<name>.yaml`   | Session files for services.                                                                        |
+| `~/.local/state/sessiond/daemon.log`    | Log of the background daemon (stdout, stderr and panics).                                          |
+| `~/.local/state/sessiond/frontend.log`  | Log of the TUI.                                                                                    |
 | `SESSIOND_LOG_DIR`                      | Overrides the log directory (default: `$XDG_STATE_HOME/sessiond`, else `~/.local/state/sessiond`). |
 
 ## Development
@@ -133,8 +133,8 @@ CLI commands log to stderr; under systemd that ends up in the journal
 cargo test --all-targets
 ```
 
-CI runs the tests on every push, builds a `.deb` with `cargo deb`, and publishes a GitHub
-release for `v*` tags.
+CI runs the tests on every push and builds a `.deb` with `cargo deb`. When the `version` in
+`Cargo.toml` changes on `main`, it tags `v<version>` and publishes a GitHub release with the `.deb`.
 
 ## License
 
@@ -143,7 +143,7 @@ MIT
 ---
 
 <sub>
-Killer of the night,<br>
-Always sees you,<br>
+Killer of the night<br>
+Always sees you<br>
 Hiding in the green
 </sub>
