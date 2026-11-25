@@ -7,13 +7,13 @@ use std::sync::Arc;
 use crate::backend::client_view::ClientView;
 use tokio::sync::{Mutex, watch};
 
-use crate::backend::session_manager::{RunId, SessionId, SessionManager};
+use crate::backend::session::{RunId, SessionId, Sessions};
 use crate::backend::systemd::UnitName;
 use crate::backend::session_runtime::SessionRuntime;
 use crate::backend::session_store::SessionStore;
-use crate::backend::terminal_manager::{TerminalId, TerminalManager};
-use crate::backend::virtual_terminal::TerminalEvent;
-use crate::backend::window_manager::{WindowId, WindowManager};
+use crate::backend::terminal::{TerminalId, Terminals};
+use crate::backend::terminal::virtual_terminal::TerminalEvent;
+use crate::backend::window::{WindowId, Windows};
 use crate::backend::yaml::models::{YamlSession, YamlWindow};
 use crate::backend::yaml::yaml_manager::YamlManager;
 use crate::backend::systemd::client::{SystemdClient, watch_events};
@@ -26,19 +26,19 @@ use color_eyre::eyre::{Result, bail};
 /// terminal-event and systemd watchers and serves IPC requests.
 pub async fn run() -> Result<()> {
     let view = ClientView::new();
-    let window_manager = WindowManager::new();
+    let windows = Windows::new();
     let (terminal_events, mut terminal_event_receiver) = tokio::sync::mpsc::unbounded_channel();
-    let terminal_manager = TerminalManager::new(terminal_events);
-    let session_manager = SessionManager::new();
+    let terminals = Terminals::new(terminal_events);
+    let sessions = Sessions::new();
     let yaml_manager = YamlManager::new()?;
 
     
 
     let mut daemon = Daemon::new(
         view,
-        terminal_manager,
-        window_manager,
-        session_manager,
+        terminals,
+        windows,
+        sessions,
         yaml_manager
     );
 
@@ -97,17 +97,17 @@ pub struct Daemon {
 impl Daemon {
     pub fn new(
         view: ClientView,
-        terminal_manager: TerminalManager,
-        window_manager: WindowManager,
-        session_manager: SessionManager,
+        terminals: Terminals,
+        windows: Windows,
+        sessions: Sessions,
         yaml_manager: YamlManager,
     ) -> Self {
         Self {
             runtime: SessionRuntime::new(
                 view,
-                terminal_manager,
-                window_manager,
-                session_manager,
+                terminals,
+                windows,
+                sessions,
             ),
             store: SessionStore::new(yaml_manager),
             changes: watch::Sender::new(0),

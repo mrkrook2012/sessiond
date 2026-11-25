@@ -1,12 +1,12 @@
 use std::time::Duration;
 
 use daemon_test::backend::client_view::ClientView;
-use daemon_test::backend::session_manager::{RunId, SessionId, SessionManager};
+use daemon_test::backend::session::{RunId, SessionId, Sessions};
 use daemon_test::backend::systemd::UnitName;
 use daemon_test::backend::session_runtime::SessionRuntime;
-use daemon_test::backend::terminal_manager::{TerminalId, TerminalManager};
-use daemon_test::backend::virtual_terminal::TerminalEvent;
-use daemon_test::backend::window_manager::WindowManager;
+use daemon_test::backend::terminal::{TerminalId, Terminals};
+use daemon_test::backend::terminal::virtual_terminal::TerminalEvent;
+use daemon_test::backend::window::Windows;
 use daemon_test::backend::yaml::models::YamlWindow;
 use daemon_test::ipc::protocol::{SessionInfo, SysdWaitStatus};
 use daemon_test::backend::guid::Guid;
@@ -18,9 +18,9 @@ fn runtime() -> (SessionRuntime, UnboundedReceiver<TerminalEvent>) {
     let (events, receiver) = unbounded_channel();
     let runtime = SessionRuntime::new(
         ClientView::new(),
-        TerminalManager::new(events),
-        WindowManager::new(),
-        SessionManager::new(),
+        Terminals::new(events),
+        Windows::new(),
+        Sessions::new(),
     );
     (runtime, receiver)
 }

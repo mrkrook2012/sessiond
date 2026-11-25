@@ -12,10 +12,10 @@ use tokio::sync::Mutex;
 
 use crate::backend::{
     daemon::Daemon,
-    session_manager::{RunId, SessionId},
+    session::{RunId, SessionId},
     systemd::UnitName,
     systemd::client::SystemdClient,
-    terminal_manager::TerminalId, window_manager::WindowId,
+    terminal::TerminalId, window::WindowId,
 };
 use crate::ipc::{
     consts::socket_path,

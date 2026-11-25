@@ -1,4 +1,4 @@
-use crate::backend::{guid::Guid, session_manager::SessionId, terminal_manager::TerminalId};
+use crate::backend::{guid::Guid, session::SessionId, terminal::TerminalId};
 
 /// What the attached client is looking at: its screen size, the session it has open
 /// and the terminals currently visible to it.

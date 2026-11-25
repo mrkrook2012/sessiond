@@ -3,9 +3,9 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 use crate::backend::{
-    session_manager::SessionId,
-    terminal_manager::TerminalId,
-    window_manager::WindowId,
+    session::SessionId,
+    terminal::TerminalId,
+    window::WindowId,
 };
 
 // TODO remove SessionId from protocol, should be string, we'll parse it later.

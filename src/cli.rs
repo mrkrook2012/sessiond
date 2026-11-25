@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use crate::backend::session_manager::SessionId;
+use crate::backend::session::SessionId;
 use crate::ipc::client::DaemonClient;
 use crate::ipc::consts::socket_path;
 use crate::ipc::protocol::{SessionInfo, SessionLookup, SysdAction, SysdWaitStatus};

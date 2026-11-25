@@ -7,7 +7,7 @@ pub mod unit_file;
 use bincode_next::{Decode, Encode};
 use color_eyre::eyre::Result;
 
-use crate::backend::session_manager::validate_session_name;
+use crate::backend::session::validate_session_name;
 
 /// A sysd session's systemd unit name, without `.service`: a valid session name
 /// (see `validate_session_name`), lowercased.

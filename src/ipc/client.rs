@@ -4,9 +4,9 @@ use color_eyre::eyre::{Result, eyre};
 use tarpc::{client, context, tokio_serde::formats::Bincode};
 
 use crate::backend::{
-    session_manager::{RunId, SessionId},
-    terminal_manager::TerminalId,
-    window_manager::WindowId,
+    session::{RunId, SessionId},
+    terminal::TerminalId,
+    window::WindowId,
 };
 use crate::ipc::{
     consts::socket_path,

@@ -6,11 +6,11 @@ use std::path::PathBuf;
 
 use daemon_test::backend::daemon::Daemon;
 use daemon_test::backend::client_view::ClientView;
-use daemon_test::backend::session_manager::{RunId, SessionId, SessionManager};
+use daemon_test::backend::session::{RunId, SessionId, Sessions};
 use daemon_test::backend::systemd::UnitName;
-use daemon_test::backend::terminal_manager::TerminalManager;
-use daemon_test::backend::virtual_terminal::TerminalEvent;
-use daemon_test::backend::window_manager::WindowManager;
+use daemon_test::backend::terminal::Terminals;
+use daemon_test::backend::terminal::virtual_terminal::TerminalEvent;
+use daemon_test::backend::window::Windows;
 use daemon_test::backend::yaml::yaml_manager::YamlManager;
 use daemon_test::ipc::protocol::{SessionInfo, SysdWaitStatus};
 use daemon_test::backend::guid::Guid;
@@ -31,9 +31,9 @@ impl Fixture {
         let (events_tx, events) = unbounded_channel();
         let daemon = Daemon::new(
             ClientView::new(),
-            TerminalManager::new(events_tx),
-            WindowManager::new(),
-            SessionManager::new(),
+            Terminals::new(events_tx),
+            Windows::new(),
+            Sessions::new(),
             YamlManager::with_dir(dir.path().join("data")).unwrap(),
         );
         Self { dir, daemon, events }

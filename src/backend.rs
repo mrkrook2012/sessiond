@@ -1,12 +1,10 @@
-pub mod virtual_terminal;
 pub mod daemon;
 pub mod guid;
 pub mod client_view;
 pub mod name_match;
-pub mod terminal_manager;
+pub mod terminal;
 pub mod window;
-pub mod window_manager;
-pub mod session_manager;
+pub mod session;
 pub mod yaml;
 pub mod systemd;
 pub mod session_runtime;

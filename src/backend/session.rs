@@ -7,7 +7,7 @@ use color_eyre::eyre::{Ok, OptionExt, Result, bail, eyre};
 use crate::{
     backend::{
         guid::{Guid, GuidManager},
-        window_manager::WindowId,
+        window::WindowId,
     },
     backend::name_match::similar_names,
     backend::systemd::UnitName,
@@ -30,13 +30,13 @@ use crate::{
 )]
 pub struct SessionId(pub Guid);
 
-pub struct SessionManager {
+pub struct Sessions {
     /// Source of both `SessionId`s and `RunId`s; every start of a sysd session gets a fresh run.
     guids: GuidManager,
     sessions: HashMap<SessionId, Session>,
 }
 
-impl SessionManager {
+impl Sessions {
     pub fn new() -> Self {
         Self {
             guids: GuidManager::new(),
@@ -46,12 +46,12 @@ impl SessionManager {
 
 
 
-    pub fn remove_window_from_session(&mut self, id: SessionId, window_id: WindowId) -> Result<()> {
+    pub fn remove_window(&mut self, id: SessionId, window_id: WindowId) -> Result<()> {
         let session = self
-            .get_session_by_id_mut(id)
+            .get_mut(id)
             .ok_or(eyre!("Session not found"))?;
         let windows = session
-            .get_windows_mut()
+            .windows_mut()
             .ok_or_eyre(eyre!("Session did not have windows"))?;
 
         windows.retain(|&id| id != window_id);
@@ -60,15 +60,15 @@ impl SessionManager {
 
 
 
-    pub fn get_all_windows_from_session(&self, id: SessionId) -> Option<&Vec<WindowId>> {
-        let session = self.get_session_by_id(id);
+    pub fn windows(&self, id: SessionId) -> Option<&Vec<WindowId>> {
+        let session = self.get(id);
         match session {
-            Some(session) => return session.get_windows(),
+            Some(session) => return session.windows(),
             None => None,
         }
     }
 
-    pub fn does_session_exist(&self, id: SessionId) -> bool {
+    pub fn contains(&self, id: SessionId) -> bool {
         self.sessions.contains_key(&id)
     }
 
@@ -91,11 +91,11 @@ impl SessionManager {
     pub fn free_default_name(&self) -> String {
         (1..)
             .map(|n| format!("session-{n}"))
-            .find(|name| !self.does_session_name_exist(name))
+            .find(|name| !self.name_exists(name))
             .expect("some session-N name is free")
     }
 
-    pub fn create_ephem_session(&mut self, windows: Vec<WindowId>, name: String) -> Result<SessionId> {
+    pub fn create_ephemeral(&mut self, windows: Vec<WindowId>, name: String) -> Result<SessionId> {
         self.check_new_name(&name)?;
         let id = self.generate_id();
         let session = Session {
@@ -107,7 +107,7 @@ impl SessionManager {
         Ok(id)
     }
 
-    pub fn create_running_sysd_session(&mut self, name: UnitName, windows: Vec<WindowId>) -> Result<RunId> {
+    pub fn create_running_sysd(&mut self, name: UnitName, windows: Vec<WindowId>) -> Result<RunId> {
         self.check_new_name(name.as_str())?;
         let id = self.generate_id();
         let run = self.next_run();
@@ -124,7 +124,7 @@ impl SessionManager {
         Ok(run)
     }
 
-    pub fn create_stopped_sysd_session(&mut self, name: UnitName, enabled: bool) -> Result<SessionId> {
+    pub fn create_stopped_sysd(&mut self, name: UnitName, enabled: bool) -> Result<SessionId> {
         self.check_new_name(name.as_str())?;
         let id = self.generate_id();
         let session = Session {
@@ -152,7 +152,7 @@ impl SessionManager {
     }
 
     /// Finds the sysd session backed by this unit.
-    pub fn get_sysd_session_by_unit_mut(&mut self, unit: &UnitName) -> Option<(SessionId, &mut SysdSession)> {
+    pub fn sysd_by_unit_mut(&mut self, unit: &UnitName) -> Option<(SessionId, &mut SysdSession)> {
         self.sessions.values_mut().find_map(|session| match &mut session.kind {
             SessionKind::SysdBased(sysd) if sysd.unit() == unit => Some((session.id, sysd)),
             _ => None,
@@ -160,19 +160,19 @@ impl SessionManager {
     }
 
     /// The session that owns this window.
-    pub fn get_session_id_by_window(&self, window_id: WindowId) -> Option<SessionId> {
+    pub fn id_by_window(&self, window_id: WindowId) -> Option<SessionId> {
         self.sessions
             .values()
             .find(|session| {
                 session
-                    .get_windows()
+                    .windows()
                     .is_some_and(|windows| windows.contains(&window_id))
             })
             .map(|session| session.id)
     }
 
     /// True if a session has this name, ignoring case (names are unique ignoring case).
-    pub fn does_session_name_exist(&self, name: &str) -> bool {
+    pub fn name_exists(&self, name: &str) -> bool {
         self.sessions.values().any(|session| session.name.eq_ignore_ascii_case(name))
     }
 
@@ -197,7 +197,7 @@ impl SessionManager {
         }
     }
 
-    pub fn get_id_by_name(&self, name: &str) -> Option<SessionId> {
+    pub fn id_by_name(&self, name: &str) -> Option<SessionId> {
         self.sessions
             .values()
             .find(|session| session.name.eq_ignore_ascii_case(name))
@@ -206,10 +206,10 @@ impl SessionManager {
 
     /// Marks a stopped sysd session as running with these windows. The caller must have
     /// torn down any previous windows.
-    pub fn start_sysd_session(&mut self, id: SessionId, windows: Vec<WindowId>) -> Result<RunId> {
+    pub fn start_sysd(&mut self, id: SessionId, windows: Vec<WindowId>) -> Result<RunId> {
         let run = self.next_run();
         let session = self
-            .get_session_by_id_mut(id)
+            .get_mut(id)
             .ok_or_eyre("Session not found")?;
 
         match &mut session.kind {
@@ -228,9 +228,9 @@ impl SessionManager {
         RunId(self.guids.generate())
     }
 
-    pub fn stop_sysd_session(&mut self, id: SessionId) -> Result<()> {
+    pub fn stop_sysd(&mut self, id: SessionId) -> Result<()> {
         let session = self
-            .get_session_by_id_mut(id)
+            .get_mut(id)
             .ok_or_eyre("Session not found")?;
 
         match &mut session.kind {
@@ -248,30 +248,30 @@ impl SessionManager {
     // Also make start session, which will take in the window id's
 
     // TODO pub fn append_to_session maybe in IPC API
-    pub fn add_window_to_session(&mut self, id: SessionId, window_id: WindowId) -> Result<()> {
+    pub fn add_window(&mut self, id: SessionId, window_id: WindowId) -> Result<()> {
         let session = self
-            .get_session_by_id_mut(id)
+            .get_mut(id)
             .ok_or(eyre!("Session not found"))?;
         let windows = session
-            .get_windows_mut()
+            .windows_mut()
             .ok_or_eyre(eyre!("Session did not have windows"))?;
 
         windows.push(window_id);
         Ok(())
     }
 
-    pub fn get_session_by_id(&self, id: SessionId) -> Option<&Session> {
+    pub fn get(&self, id: SessionId) -> Option<&Session> {
         self.sessions.get(&id)
     }
 
-    pub fn get_session_by_id_mut(&mut self, id: SessionId) -> Option<&mut Session> {
+    pub fn get_mut(&mut self, id: SessionId) -> Option<&mut Session> {
         self.sessions.get_mut(&id)
     }
-    pub fn list_sessions(&self) -> Vec<&Session> {
+    pub fn list(&self) -> Vec<&Session> {
         self.sessions.values().collect()
     }
 
-    pub fn kill_session(&mut self, id: SessionId) {
+    pub fn remove(&mut self, id: SessionId) {
         self.sessions.remove(&id);
     }
 
@@ -287,7 +287,7 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn get_windows(&self) -> Option<&Vec<WindowId>> {
+    pub fn windows(&self) -> Option<&Vec<WindowId>> {
         match &self.kind {
             SessionKind::Ephemoral { windows } => Some(windows),
             SessionKind::SysdBased(session) => match &session.state {
@@ -297,7 +297,7 @@ impl Session {
         }
     }
 
-    pub fn get_windows_mut(&mut self) -> Option<&mut Vec<WindowId>> {
+    pub fn windows_mut(&mut self) -> Option<&mut Vec<WindowId>> {
         match &mut self.kind {
             SessionKind::Ephemoral { windows } => Some(windows),
             SessionKind::SysdBased(session) => match &mut session.state {
@@ -352,7 +352,7 @@ impl SysdSession {
         }
     }
 
-    pub fn get_sysd_data(&self) -> SysdData {
+    pub fn sysd_data(&self) -> SysdData {
         SysdData {
             enabled: self.enabled,
             running: self.is_running(),

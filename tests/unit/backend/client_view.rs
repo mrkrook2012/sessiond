@@ -1,6 +1,6 @@
 use daemon_test::backend::client_view::ClientView;
-use daemon_test::backend::session_manager::SessionId;
-use daemon_test::backend::terminal_manager::TerminalId;
+use daemon_test::backend::session::SessionId;
+use daemon_test::backend::terminal::TerminalId;
 use daemon_test::backend::guid::Guid;
 
 #[test]
