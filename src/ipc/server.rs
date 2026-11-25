@@ -11,7 +11,7 @@ use tarpc::{
 use tokio::sync::Mutex;
 
 use crate::backend::{
-    daemon_manager::DaemonManager,
+    daemon::Daemon,
     session_manager::{RunId, SessionId},
     systemd::UnitName,
     systemd::client::SystemdClient,
@@ -28,14 +28,14 @@ const MAX_WAIT_MS: u64 = 60_000;
 
 #[derive(Clone)]
 pub struct DaemonRpcServer {
-    manager: Arc<Mutex<DaemonManager>>,
+    daemon: Arc<Mutex<Daemon>>,
     /// `None` when the session bus / user systemd is not reachable (e.g. in CI).
     systemd: Option<SystemdClient>,
 }
 
 impl DaemonRpcServer {
-    pub fn new(manager: Arc<Mutex<DaemonManager>>, systemd: Option<SystemdClient>) -> Self {
-        Self { manager, systemd }
+    pub fn new(daemon: Arc<Mutex<Daemon>>, systemd: Option<SystemdClient>) -> Self {
+        Self { daemon, systemd }
     }
 
     fn systemd(&self) -> Result<&SystemdClient, String> {
@@ -70,7 +70,7 @@ impl DaemonRpcServer {
     }
 }
 
-// Note on locking: systemd calls are made *without* holding the manager lock.
+// Note on locking: systemd calls are made *without* holding the daemon lock.
 // Starting/stopping a unit runs its ExecStart/ExecStop, which call back into this daemon.
 
 impl DaemonService for DaemonRpcServer {
@@ -81,7 +81,7 @@ impl DaemonService for DaemonRpcServer {
         scrollback: u32,
         since: u64,
     ) -> Result<TerminalUpdate, String> {
-        self.manager
+        self.daemon
             .lock()
             .await
             .get_wanted_data(terminal_id, scrollback, since)
@@ -89,13 +89,13 @@ impl DaemonService for DaemonRpcServer {
     }
 
     async fn start(self, _: context::Context, rows: u16, cols: u16) {
-        let mut manager = self.manager.lock().await;
-        manager.handle_start(rows, cols);
+        let mut daemon = self.daemon.lock().await;
+        daemon.handle_start(rows, cols);
     }
 
     async fn update_screen_size(self, _: context::Context, rows: u16, cols: u16) {
-        let mut manager = self.manager.lock().await;
-        manager.handle_update_screen_size(rows, cols);
+        let mut daemon = self.daemon.lock().await;
+        daemon.handle_update_screen_size(rows, cols);
     }
 
     async fn create_session(
@@ -105,8 +105,8 @@ impl DaemonService for DaemonRpcServer {
         command: Option<String>,
         name: Option<String>,
     ) -> Result<Vec<SessionInfo>, String> {
-        let mut manager = self.manager.lock().await;
-        manager
+        let mut daemon = self.daemon.lock().await;
+        daemon
             .handle_create_session(working_dir, command, name)
             .map_err(|e| e.to_string())
     }
@@ -121,7 +121,7 @@ impl DaemonService for DaemonRpcServer {
         // The daemon's own checks first (cheap, and the clearer error), then systemd's,
         // without the lock. Creating re-checks the daemon's side under the lock.
         let unit = self
-            .manager
+            .daemon
             .lock()
             .await
             .new_service_unit(name.as_deref())
@@ -129,7 +129,7 @@ impl DaemonService for DaemonRpcServer {
         self.ensure_unit_name_free(&unit).await?;
 
         let sessions = self
-            .manager
+            .daemon
             .lock()
             .await
             .handle_create_sysd_session(working_dir, command, name)
@@ -139,13 +139,13 @@ impl DaemonService for DaemonRpcServer {
     }
 
     async fn exit_session(self, _: context::Context) -> Vec<SessionInfo> {
-        let mut manager = self.manager.lock().await;
-        manager.handle_exit_session()
+        let mut daemon = self.daemon.lock().await;
+        daemon.handle_exit_session()
     }
 
     async fn kill_session(self, _: context::Context, id: SessionId) -> Vec<SessionInfo> {
-        let mut manager = self.manager.lock().await;
-        manager.handle_kill_session(id)
+        let mut daemon = self.daemon.lock().await;
+        daemon.handle_kill_session(id)
     }
 
     async fn write_terminal(
@@ -154,36 +154,36 @@ impl DaemonService for DaemonRpcServer {
         terminal_id: TerminalId,
         data: Vec<u8>,
     ) -> Result<(), String> {
-        let mut manager = self.manager.lock().await;
-        manager
+        let mut daemon = self.daemon.lock().await;
+        daemon
             .handle_write(terminal_id, data)
             .map_err(|e| e.to_string())
     }
 
     async fn list_sessions(self, _: context::Context) -> Vec<SessionInfo> {
-        let manager = self.manager.lock().await;
-        manager.handle_list_sessions()
+        let daemon = self.daemon.lock().await;
+        daemon.handle_list_sessions()
     }
 
     async fn session_id_by_name(self, _: context::Context, name: String) -> SessionLookup {
-        self.manager.lock().await.handle_session_id_by_name(&name)
+        self.daemon.lock().await.handle_session_id_by_name(&name)
     }
 
     async fn create_window(self, _: context::Context, id: SessionId) -> Result<SessionInfo, String> {
-        let mut manager = self.manager.lock().await;
-        manager
+        let mut daemon = self.daemon.lock().await;
+        daemon
             .handle_create_window(id)
             .map_err(|e| e.to_string())
     }
 
     async fn open_session(self, _: context::Context, id: SessionId) -> Result<SessionInfo, String> {
-        let mut manager = self.manager.lock().await;
-        manager.handle_open_session(id).map_err(|e| e.to_string())
+        let mut daemon = self.daemon.lock().await;
+        daemon.handle_open_session(id).map_err(|e| e.to_string())
     }
 
     async fn change_window(self, _: context::Context, window_id: WindowId) -> Result<(), String> {
-        let mut manager = self.manager.lock().await;
-        manager
+        let mut daemon = self.daemon.lock().await;
+        daemon
             .handle_change_window(window_id)
             .map_err(|e| e.to_string())
     }
@@ -194,8 +194,8 @@ impl DaemonService for DaemonRpcServer {
         id: SessionId,
         window_id: WindowId,
     ) -> Result<SessionInfo, String> {
-        let mut manager = self.manager.lock().await;
-        manager
+        let mut daemon = self.daemon.lock().await;
+        daemon
             .handle_kill_window(id, window_id)
             .map_err(|e| e.to_string())
     }
@@ -206,14 +206,14 @@ impl DaemonService for DaemonRpcServer {
         id: SessionId,
     ) -> Result<(), String> {
         let unit = self
-            .manager
+            .daemon
             .lock()
             .await
             .export_unit(id)
             .map_err(|e| e.to_string())?;
         self.ensure_unit_name_free(&unit).await?;
 
-        self.manager
+        self.daemon
             .lock()
             .await
             .handle_export_session(id)
@@ -227,15 +227,15 @@ impl DaemonService for DaemonRpcServer {
         _: context::Context,
         file_path: std::path::PathBuf,
     ) -> Result<(), String> {
-        let mut manager = self.manager.lock().await;
-        manager
+        let mut daemon = self.daemon.lock().await;
+        daemon
             .handle_start_session_from_file(file_path)
             .map_err(|e| e.to_string())
     }
 
     async fn kill_daemon(self, _: context::Context) {
         // Blocks this worker for at most the terminate grace period, then exits the process.
-        self.manager.lock().await.handle_kill_daemon()
+        self.daemon.lock().await.handle_kill_daemon()
     }
 
     async fn export_session_to_file(
@@ -244,8 +244,8 @@ impl DaemonService for DaemonRpcServer {
         id: SessionId,
         working_dir: std::path::PathBuf,
     ) -> Result<std::path::PathBuf, String> {
-        let manager = self.manager.lock().await;
-        manager
+        let daemon = self.daemon.lock().await;
+        daemon
             .handle_export_session_to_file(id, working_dir)
             .map_err(|e| e.to_string())
     }
@@ -257,7 +257,7 @@ impl DaemonService for DaemonRpcServer {
         sysd_action: SysdAction,
     ) -> Result<Vec<SessionInfo>, String> {
         let unit = self
-            .manager
+            .daemon
             .lock()
             .await
             .sysd_unit(id)
@@ -276,16 +276,16 @@ impl DaemonService for DaemonRpcServer {
             format!("{e:#}")
         })?;
 
-        let mut manager = self.manager.lock().await;
+        let mut daemon = self.daemon.lock().await;
 
         // The event watcher picks this up as well, but set it now so the reply is accurate.
         match sysd_action {
-            SysdAction::Enable => manager.set_sysd_enabled(&unit, true),
-            SysdAction::Disable => manager.set_sysd_enabled(&unit, false),
+            SysdAction::Enable => daemon.set_sysd_enabled(&unit, true),
+            SysdAction::Disable => daemon.set_sysd_enabled(&unit, false),
             _ => {}
         }
 
-        Ok(manager.get_all_session_info())
+        Ok(daemon.get_all_session_info())
     }
 
     async fn start_sysd_session_from_file(
@@ -293,8 +293,8 @@ impl DaemonService for DaemonRpcServer {
         _: context::Context,
         file_path: std::path::PathBuf,
     ) -> Result<RunId, String> {
-        let mut manager = self.manager.lock().await;
-        manager
+        let mut daemon = self.daemon.lock().await;
+        daemon
             .handle_start_sysd_session_from_file(file_path)
             .map_err(|e| e.to_string())
     }
@@ -310,7 +310,7 @@ impl DaemonService for DaemonRpcServer {
             + std::time::Duration::from_millis(timeout_ms.min(MAX_WAIT_MS));
 
         loop {
-            let (status, mut changes) = self.manager.lock().await.sysd_wait_status(&name, run);
+            let (status, mut changes) = self.daemon.lock().await.sysd_wait_status(&name, run);
             if status != SysdWaitStatus::Running {
                 return Ok(status);
             }
@@ -323,8 +323,8 @@ impl DaemonService for DaemonRpcServer {
     }
 
     async fn stop_sysd_session(self, _: context::Context, id: SessionId) -> Result<(), String> {
-        let mut manager = self.manager.lock().await;
-        manager
+        let mut daemon = self.daemon.lock().await;
+        daemon
             .handle_stop_sysd_session(id)
             .map_err(|e| e.to_string())
     }
@@ -334,7 +334,7 @@ impl DaemonService for DaemonRpcServer {
         _: context::Context,
         id: SessionId,
     ) -> Result<std::path::PathBuf, String> {
-        self.manager
+        self.daemon
             .lock()
             .await
             .handle_update_sysd_session(id)
@@ -347,7 +347,7 @@ impl DaemonService for DaemonRpcServer {
         name: String,
     ) -> Result<Vec<std::path::PathBuf>, String> {
         let (unit, has_unit_file) = self
-            .manager
+            .daemon
             .lock()
             .await
             .sysd_delete_target(&name)
@@ -365,7 +365,7 @@ impl DaemonService for DaemonRpcServer {
         }
 
         let removed = self
-            .manager
+            .daemon
             .lock()
             .await
             .handle_delete_sysd_session(&unit)
@@ -380,10 +380,10 @@ impl DaemonService for DaemonRpcServer {
 }
 
 pub async fn run_server(
-    manager: Arc<Mutex<DaemonManager>>,
+    daemon: Arc<Mutex<Daemon>>,
     systemd: Option<SystemdClient>,
 ) -> Result<()> {
-    let server = DaemonRpcServer::new(manager, systemd);
+    let server = DaemonRpcServer::new(daemon, systemd);
 
     let listener =
         tarpc::serde_transport::unix::listen(socket_path(), Bincode::default).await?;

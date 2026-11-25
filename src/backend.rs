@@ -1,7 +1,6 @@
 pub mod virtual_terminal;
 pub mod daemon;
 pub mod guid;
-pub mod daemon_manager;
 pub mod client_view;
 pub mod name_match;
 pub mod terminal_manager;

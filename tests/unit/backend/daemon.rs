@@ -1,10 +1,10 @@
-//! `DaemonManager` without the RPC server. Everything here stays out of the real systemd
+//! `Daemon` without the RPC server. Everything here stays out of the real systemd
 //! unit directory: methods that write unit files are covered by `tests/e2e` instead.
 
 use std::fs;
 use std::path::PathBuf;
 
-use daemon_test::backend::daemon_manager::DaemonManager;
+use daemon_test::backend::daemon::Daemon;
 use daemon_test::backend::client_view::ClientView;
 use daemon_test::backend::session_manager::{RunId, SessionId, SessionManager};
 use daemon_test::backend::systemd::UnitName;
@@ -21,7 +21,7 @@ use crate::support::eventually;
 
 struct Fixture {
     dir: TempDir,
-    manager: DaemonManager,
+    daemon: Daemon,
     events: UnboundedReceiver<TerminalEvent>,
 }
 
@@ -29,14 +29,14 @@ impl Fixture {
     fn new() -> Self {
         let dir = TempDir::new().unwrap();
         let (events_tx, events) = unbounded_channel();
-        let manager = DaemonManager::new(
+        let daemon = Daemon::new(
             ClientView::new(),
             TerminalManager::new(events_tx),
             WindowManager::new(),
             SessionManager::new(),
             YamlManager::with_dir(dir.path().join("data")).unwrap(),
         );
-        Self { dir, manager, events }
+        Self { dir, daemon, events }
     }
 
     /// Writes a session YAML outside the data dir and returns its path.
@@ -51,7 +51,7 @@ impl Fixture {
     }
 
     fn session(&self, name: &str) -> Option<SessionInfo> {
-        self.manager
+        self.daemon
             .handle_list_sessions()
             .into_iter()
             .find(|s| s.name == name)
@@ -62,7 +62,7 @@ impl Fixture {
     }
 
     fn status(&self, name: &str, run: RunId) -> SysdWaitStatus {
-        self.manager.sysd_wait_status(name, run).0
+        self.daemon.sysd_wait_status(name, run).0
     }
 }
 
@@ -79,13 +79,13 @@ fn unique(prefix: &str) -> String {
 fn create_list_and_kill_ephemeral_sessions() {
     let mut f = Fixture::new();
     let after_create = f
-        .manager
+        .daemon
         .handle_create_session("/tmp".into(), Some("true".into()), Some("eph".into())).unwrap();
     assert_eq!(after_create.len(), 1);
 
     let id = f.id("eph");
-    assert!(f.manager.handle_kill_session(id).is_empty());
-    assert!(f.manager.handle_list_sessions().is_empty());
+    assert!(f.daemon.handle_kill_session(id).is_empty());
+    assert!(f.daemon.handle_list_sessions().is_empty());
 }
 
 #[test]
@@ -93,7 +93,7 @@ fn start_session_from_file_loads_every_window() {
     let mut f = Fixture::new();
     let path = f.yaml("multi", &[("sleep 300", false), ("sleep 301", true)]);
 
-    f.manager.handle_start_session_from_file(path).unwrap();
+    f.daemon.handle_start_session_from_file(path).unwrap();
 
     let session = f.session("multi").unwrap();
     assert_eq!(session.windows_info.len(), 2);
@@ -104,33 +104,33 @@ fn start_session_from_file_loads_every_window() {
 fn start_session_from_bad_file_fails_without_creating_anything() {
     let mut f = Fixture::new();
     let missing = f.dir.path().join("missing.yaml");
-    assert!(f.manager.handle_start_session_from_file(missing).is_err());
+    assert!(f.daemon.handle_start_session_from_file(missing).is_err());
 
     let garbage = f.dir.path().join("garbage.yaml");
     fs::write(&garbage, "name: [").unwrap();
-    assert!(f.manager.handle_start_session_from_file(garbage).is_err());
+    assert!(f.daemon.handle_start_session_from_file(garbage).is_err());
 
-    assert!(f.manager.handle_list_sessions().is_empty());
+    assert!(f.daemon.handle_list_sessions().is_empty());
 }
 
 #[test]
 fn export_to_file_writes_name_dot_yaml_into_the_directory() {
     let mut f = Fixture::new();
-    f.manager
+    f.daemon
         .handle_create_session("/tmp".into(), Some("sleep 300".into()), Some("exp".into())).unwrap();
     let id = f.id("exp");
     let out = f.dir.path().join("out");
     fs::create_dir(&out).unwrap();
 
     let path = eventually("command to be exported", || {
-        let path = f.manager.handle_export_session_to_file(id, out.clone()).unwrap();
+        let path = f.daemon.handle_export_session_to_file(id, out.clone()).unwrap();
         fs::read_to_string(&path).unwrap().contains("sleep 300").then_some(path)
     });
     assert_eq!(path, out.join("exp.yaml"));
 
     // And it imports again.
-    f.manager.handle_kill_session(id);
-    f.manager.handle_start_session_from_file(path).unwrap();
+    f.daemon.handle_kill_session(id);
+    f.daemon.handle_start_session_from_file(path).unwrap();
     assert!(f.session("exp").is_some());
 }
 
@@ -138,7 +138,7 @@ fn export_to_file_writes_name_dot_yaml_into_the_directory() {
 fn export_of_unknown_session_fails() {
     let f = Fixture::new();
     assert!(f
-        .manager
+        .daemon
         .handle_export_session_to_file(SessionId(Guid::from_u128(9)), f.dir.path().to_path_buf())
         .is_err());
 }
@@ -150,44 +150,44 @@ fn sysd_session_from_file_runs_and_restarts_with_a_new_run() {
     let mut f = Fixture::new();
     let path = f.yaml("Svc", &[("sleep 300", true)]);
 
-    let first = f.manager.handle_start_sysd_session_from_file(path.clone()).unwrap();
+    let first = f.daemon.handle_start_sysd_session_from_file(path.clone()).unwrap();
     // Stored under the lowercase unit name.
     let session = f.session("svc").unwrap();
     assert!(session.sysd_data.unwrap().running);
     assert_eq!(f.status("svc", first), SysdWaitStatus::Running);
 
-    let second = f.manager.handle_start_sysd_session_from_file(path).unwrap();
+    let second = f.daemon.handle_start_sysd_session_from_file(path).unwrap();
     assert_ne!(first, second);
     assert_eq!(f.status("svc", first), SysdWaitStatus::Ended);
     assert_eq!(f.status("svc", second), SysdWaitStatus::Running);
-    assert_eq!(f.manager.handle_list_sessions().len(), 1);
+    assert_eq!(f.daemon.handle_list_sessions().len(), 1);
 }
 
 #[test]
 fn stopping_a_sysd_session_ends_its_run() {
     let mut f = Fixture::new();
     let run = f
-        .manager
+        .daemon
         .handle_start_sysd_session_from_file(f.yaml("svc", &[("sleep 300", true)]))
         .unwrap();
     let id = f.id("svc");
 
-    f.manager.handle_stop_sysd_session(id).unwrap();
+    f.daemon.handle_stop_sysd_session(id).unwrap();
     assert_eq!(f.status("svc", run), SysdWaitStatus::Ended);
     assert!(!f.session("svc").unwrap().sysd_data.unwrap().running);
 
-    assert!(f.manager.handle_stop_sysd_session(id).is_err());
+    assert!(f.daemon.handle_stop_sysd_session(id).is_err());
 }
 
 #[test]
 fn unit_deactivation_ends_the_run() {
     let mut f = Fixture::new();
     let run = f
-        .manager
+        .daemon
         .handle_start_sysd_session_from_file(f.yaml("svc", &[("sleep 300", true)]))
         .unwrap();
 
-    f.manager.handle_unit_deactivated(&UnitName::new("svc").unwrap());
+    f.daemon.handle_unit_deactivated(&UnitName::new("svc").unwrap());
     assert_eq!(f.status("svc", run), SysdWaitStatus::Ended);
 }
 
@@ -195,13 +195,13 @@ fn unit_deactivation_ends_the_run() {
 fn tracked_exit_event_is_reported_to_waiters() {
     let mut f = Fixture::new();
     let run = f
-        .manager
+        .daemon
         .handle_start_sysd_session_from_file(f.yaml("svc", &[("(exit 4)", true)]))
         .unwrap();
-    let (_, changes) = f.manager.sysd_wait_status("svc", run);
+    let (_, changes) = f.daemon.sysd_wait_status("svc", run);
 
     let event = eventually("tracked exit", || f.events.try_recv().ok());
-    f.manager.handle_terminal_event(event);
+    f.daemon.handle_terminal_event(event);
 
     assert!(changes.has_changed().unwrap(), "waiters were not woken");
     assert_eq!(f.status("svc", run), SysdWaitStatus::TrackedExited { code: 4 });
@@ -210,13 +210,13 @@ fn tracked_exit_event_is_reported_to_waiters() {
 #[test]
 fn state_changes_wake_waiters() {
     let mut f = Fixture::new();
-    f.manager
+    f.daemon
         .handle_create_session("/tmp".into(), Some("true".into()), Some("eph".into())).unwrap();
-    let (_, changes) = f.manager.sysd_wait_status("eph", RunId(Guid::from_u128(1)));
+    let (_, changes) = f.daemon.sysd_wait_status("eph", RunId(Guid::from_u128(1)));
     assert!(!changes.has_changed().unwrap());
 
     let id = f.id("eph");
-    f.manager.handle_kill_session(id);
+    f.daemon.handle_kill_session(id);
     assert!(changes.has_changed().unwrap());
 }
 
@@ -226,16 +226,16 @@ fn state_changes_wake_waiters() {
 fn update_saves_added_windows_to_the_file_the_service_started_from() {
     let mut f = Fixture::new();
     let path = f.yaml("Server", &[("sleep 300", true)]);
-    f.manager.handle_start_sysd_session_from_file(path.clone()).unwrap();
+    f.daemon.handle_start_sysd_session_from_file(path.clone()).unwrap();
     let id = f.id("server");
 
     // Add a window and run a monitor in it, like btop next to a game server.
-    let info = f.manager.handle_create_window(id).unwrap();
+    let info = f.daemon.handle_create_window(id).unwrap();
     let monitor = info.windows_info[1].terminal_id;
-    f.manager.handle_write(monitor, b"sleep 302\r".to_vec()).unwrap();
+    f.daemon.handle_write(monitor, b"sleep 302\r".to_vec()).unwrap();
 
     let yaml = eventually("the monitor to be saved", || {
-        let written = f.manager.handle_update_sysd_session(id).unwrap();
+        let written = f.daemon.handle_update_sysd_session(id).unwrap();
         assert_eq!(written, path, "must overwrite the file the unit starts from");
         let yaml = YamlManager::with_dir(f.dir.path().to_path_buf())
             .unwrap()
@@ -257,28 +257,28 @@ fn update_saves_added_windows_to_the_file_the_service_started_from() {
     assert_eq!(f.session("server").unwrap().windows_info.len(), 2);
 
     // And the next start brings both windows back.
-    f.manager.handle_start_sysd_session_from_file(path).unwrap();
+    f.daemon.handle_start_sysd_session_from_file(path).unwrap();
     assert_eq!(f.session("server").unwrap().windows_info.len(), 2);
 }
 
 #[test]
 fn update_rejects_ephemeral_and_stopped_sessions_without_writing() {
     let mut f = Fixture::new();
-    f.manager
+    f.daemon
         .handle_create_session("/tmp".into(), Some("sleep 300".into()), Some("eph".into())).unwrap();
-    assert!(f.manager.handle_update_sysd_session(f.id("eph")).is_err());
+    assert!(f.daemon.handle_update_sysd_session(f.id("eph")).is_err());
 
     let path = f.yaml("svc", &[("sleep 300", true)]);
     let before = fs::read_to_string(&path).unwrap();
-    f.manager.handle_start_sysd_session_from_file(path.clone()).unwrap();
+    f.daemon.handle_start_sysd_session_from_file(path.clone()).unwrap();
     let id = f.id("svc");
-    f.manager.handle_stop_sysd_session(id).unwrap();
+    f.daemon.handle_stop_sysd_session(id).unwrap();
 
-    let error = f.manager.handle_update_sysd_session(id).unwrap_err();
+    let error = f.daemon.handle_update_sysd_session(id).unwrap_err();
     assert!(error.to_string().contains("stopped"), "got: {error}");
     assert_eq!(fs::read_to_string(&path).unwrap(), before);
 
-    assert!(f.manager.handle_update_sysd_session(SessionId(Guid::from_u128(9))).is_err());
+    assert!(f.daemon.handle_update_sysd_session(SessionId(Guid::from_u128(9))).is_err());
 }
 
 // ------------------------------------------------------------------ sysd delete
@@ -286,16 +286,16 @@ fn update_rejects_ephemeral_and_stopped_sessions_without_writing() {
 #[test]
 fn delete_target_rejects_ephemeral_sessions() {
     let mut f = Fixture::new();
-    f.manager
+    f.daemon
         .handle_create_session("/tmp".into(), Some("true".into()), Some("eph".into())).unwrap();
-    assert!(f.manager.sysd_delete_target("eph").is_err());
+    assert!(f.daemon.sysd_delete_target("eph").is_err());
 }
 
 #[test]
 fn delete_target_accepts_unknown_names() {
     let f = Fixture::new();
     let name = unique("ghost");
-    let (unit, has_unit_file) = f.manager.sysd_delete_target(&name).unwrap();
+    let (unit, has_unit_file) = f.daemon.sysd_delete_target(&name).unwrap();
     assert_eq!(unit.as_str(), name);
     assert!(!has_unit_file);
 }
@@ -304,11 +304,11 @@ fn delete_target_accepts_unknown_names() {
 fn deleting_a_session_with_no_files_left_still_removes_it() {
     let mut f = Fixture::new();
     let name = unique("svc");
-    f.manager
+    f.daemon
         .handle_start_sysd_session_from_file(f.yaml(&name, &[("sleep 300", true)]))
         .unwrap();
 
-    let removed = f.manager.handle_delete_sysd_session(&UnitName::new(&name).unwrap()).unwrap();
+    let removed = f.daemon.handle_delete_sysd_session(&UnitName::new(&name).unwrap()).unwrap();
     assert!(removed.is_empty(), "nothing was stored in the data dir: {removed:?}");
     assert!(f.session(&name).is_none());
 }
@@ -320,7 +320,7 @@ fn deleting_removes_stored_yaml_files() {
     let stored = f.dir.path().join("data").join(format!("{name}.yaml"));
     fs::write(&stored, format!("name: {name}\nwindows: []\n")).unwrap();
 
-    let removed = f.manager.handle_delete_sysd_session(&UnitName::new(&name).unwrap()).unwrap();
+    let removed = f.daemon.handle_delete_sysd_session(&UnitName::new(&name).unwrap()).unwrap();
     assert_eq!(removed, vec![stored.clone()]);
     assert!(!stored.exists());
 }
@@ -329,7 +329,7 @@ fn deleting_removes_stored_yaml_files() {
 fn deleting_something_that_does_not_exist_fails() {
     let mut f = Fixture::new();
     let err = f
-        .manager
+        .daemon
         .handle_delete_sysd_session(&UnitName::new(&unique("ghost")).unwrap())
         .unwrap_err();
     assert!(err.to_string().contains("No service named"), "got: {err}");
@@ -338,12 +338,12 @@ fn deleting_something_that_does_not_exist_fails() {
 #[test]
 fn starting_a_service_file_does_not_clobber_an_ephemeral_session() {
     let mut f = Fixture::new();
-    f.manager
+    f.daemon
         .handle_create_session("/tmp".into(), Some("sleep 300".into()), Some("Clash".into()))
         .unwrap();
     let path = f.yaml("clash", &[("sleep 301", true)]);
 
-    assert!(f.manager.handle_start_sysd_session_from_file(path).is_err());
+    assert!(f.daemon.handle_start_sysd_session_from_file(path).is_err());
     let session = f.session("Clash").expect("ephemeral session survives");
     assert!(session.sysd_data.is_none());
     assert_eq!(session.windows_info.len(), 1);
@@ -354,13 +354,13 @@ fn sessions_from_files_need_a_valid_free_name() {
     let mut f = Fixture::new();
     let bad = f.dir.path().join("bad.yaml");
     fs::write(&bad, "name: ../../escape\nwindows: []\n").unwrap();
-    assert!(f.manager.handle_start_session_from_file(bad.clone()).is_err());
-    assert!(f.manager.handle_start_sysd_session_from_file(bad).is_err());
+    assert!(f.daemon.handle_start_session_from_file(bad.clone()).is_err());
+    assert!(f.daemon.handle_start_sysd_session_from_file(bad).is_err());
 
     let path = f.yaml("twice", &[("sleep 300", false)]);
-    f.manager.handle_start_session_from_file(path.clone()).unwrap();
-    assert!(f.manager.handle_start_session_from_file(path).is_err());
-    assert_eq!(f.manager.handle_list_sessions().len(), 1);
+    f.daemon.handle_start_session_from_file(path.clone()).unwrap();
+    assert!(f.daemon.handle_start_session_from_file(path).is_err());
+    assert_eq!(f.daemon.handle_list_sessions().len(), 1);
 }
 
 #[test]
@@ -372,7 +372,7 @@ fn creating_a_service_validates_before_writing() {
         (Some("true"), Some("has space")),
         (Some("true"), Some("../escape")),
     ] {
-        let result = f.manager.handle_create_sysd_session(
+        let result = f.daemon.handle_create_sysd_session(
             "/tmp".into(),
             command.map(String::from),
             name.map(String::from),
@@ -380,5 +380,5 @@ fn creating_a_service_validates_before_writing() {
         assert!(result.is_err(), "accepted {command:?} {name:?}");
     }
     assert!(fs::read_dir(f.dir.path().join("data")).unwrap().next().is_none(), "wrote a file");
-    assert!(f.manager.handle_list_sessions().is_empty());
+    assert!(f.daemon.handle_list_sessions().is_empty());
 }

@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
             // Clean up any stale socket file
             let _ = fs::remove_file(socket_path());
 
-            match backend::daemon::run_daemon().await {
+            match backend::daemon::run().await {
                 Ok(()) => tracing::info!("Daemon stopped"),
                 Err(e) => tracing::error!("Daemon failed: {e:#}"),
             }
