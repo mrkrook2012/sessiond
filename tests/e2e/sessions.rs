@@ -9,7 +9,9 @@ fn lifecycle_run_list_attach_kill() {
     h.ok(&["run", "--name", "alpha", "sleep", "1"]);
     assert_eq!(h.sessions(), vec!["alpha"]);
 
-    h.ok(&["attach", "alpha"]);
+    // Without a terminal, attach finds the session but cannot show it.
+    let err = h.fails(&["attach", "alpha"]);
+    assert!(err.contains("needs a terminal"), "got: {err}");
 
     h.ok(&["kill", "alpha"]);
     assert!(h.sessions().is_empty());
@@ -19,9 +21,13 @@ fn lifecycle_run_list_attach_kill() {
 fn run_without_name_gets_a_generated_name() {
     let h = Harness::new();
 
-    h.ok(&["run", "sleep", "1"]);
+    let out = h.ok(&["run", "sleep", "1"]);
 
-    assert_eq!(h.sessions().len(), 1);
+    let sessions = h.sessions();
+    assert_eq!(sessions.len(), 1);
+    let name = &sessions[0];
+    assert_eq!(name.matches('-').count(), 1, "not a word-word name: {name}");
+    assert_eq!(out.trim(), format!("Started session '{name}'"));
 }
 
 #[test]

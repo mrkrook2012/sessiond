@@ -51,8 +51,11 @@ impl SessionFiles {
     }
 
     pub fn load(&self, path: &Path) -> Result<SessionConfig> {
-        let input = fs::read_to_string(path)?;
-        Ok(serde_yaml::from_str(&input)?)
+        use color_eyre::eyre::WrapErr;
+        let input = fs::read_to_string(path)
+            .wrap_err_with(|| format!("Failed to read session file {}", path.display()))?;
+        serde_yaml::from_str(&input)
+            .wrap_err_with(|| format!("Invalid session file {}", path.display()))
     }
 
     pub fn save(&self, session: &SessionConfig) -> Result<PathBuf> {

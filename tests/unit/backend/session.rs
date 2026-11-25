@@ -302,11 +302,14 @@ fn invalid_names_are_rejected() {
 }
 
 #[test]
-fn default_names_skip_taken_ones() {
+fn default_names_are_random_word_pairs_that_are_free() {
     let mut sessions = Sessions::new();
-    assert_eq!(sessions.free_default_name(), "session-1");
-    sessions.create_ephemeral(vec![], "Session-1".into()).unwrap();
-    assert_eq!(sessions.free_default_name(), "session-2");
+    let first = sessions.free_default_name();
+    assert_eq!(first.matches('-').count(), 1, "got {first}");
+    sessions.create_ephemeral(vec![], first.to_uppercase()).unwrap();
+    for _ in 0..200 {
+        assert!(!sessions.free_default_name().eq_ignore_ascii_case(&first));
+    }
 }
 
 #[test]

@@ -1,11 +1,10 @@
-use bincode_next::{Decode, Encode};
 use serde::Serialize;
 use std::path::PathBuf;
 
 use crate::ids::{SessionId, TerminalId, WindowId};
 
 // TODO remove SessionId from protocol, should be string, we'll parse it later.
-#[derive(Decode, Encode, Debug, Serialize, serde::Deserialize)]
+#[derive(Debug, Serialize, serde::Deserialize)]
 pub enum ClientMessage {
     Ping,
 
@@ -99,7 +98,7 @@ pub enum ClientMessage {
 }
 
 /// Answer to `session_id_by_name`.
-#[derive(Decode, Encode, Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
 pub enum SessionLookup {
     /// `name` is the session's own name, which may differ in case from what was asked for.
     Found { id: SessionId, name: String },
@@ -109,7 +108,7 @@ pub enum SessionLookup {
 }
 
 /// Answer to `wait_sysd_session`: what happened to one run of a sysd session.
-#[derive(Decode, Encode, Debug, Clone, Copy, PartialEq, Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, serde::Deserialize)]
 pub enum SysdWaitStatus {
     /// Nothing happened before the wait timed out; ask again.
     Running,
@@ -119,7 +118,7 @@ pub enum SysdWaitStatus {
     Ended,
 }
 
-#[derive(Decode, Encode, Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub enum SysdAction {
     Start,
     Stop,
@@ -128,7 +127,7 @@ pub enum SysdAction {
     Disable,
 }
 
-#[derive(Decode, Encode, Debug, Clone, Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub enum ServerMessage {
     Ok,
     Pong,
@@ -143,19 +142,19 @@ pub enum ServerMessage {
     TerminalData { terminals: Vec<TerminalUpdate> },
 }
 
-// #[derive(Decode, Encode, Debug, Clone)]
+// #[derive(Debug, Clone)]
 // pub struct ExportSessionInfo {
 //     pub name: String,
 //     pub windows_info: Vec<WindowInfo>,
 // }
 
-// #[derive(Decode, Encode, Debug, Clone)]
+// #[derive(Debug, Clone)]
 // pub struct ExportWindowInfo {
 //     pub working_dir: String,
 //     pub command: String,
 // }
 
-#[derive(Decode, Encode, Debug, Clone, Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct SessionInfo {
     pub id: SessionId,
     pub name: String,
@@ -163,13 +162,13 @@ pub struct SessionInfo {
     pub sysd_data: Option<SysdData>, // maybe improve later
 }
 
-#[derive(Decode, Encode, Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct SysdData {
     pub enabled: bool,
     pub running: bool,
 }
 
-#[derive(Decode, Encode, Debug, Clone, Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct WindowInfo {
     pub window_id: WindowId,
     pub terminal_id: TerminalId,
@@ -200,7 +199,7 @@ impl SessionInfo {
     }
 }
 
-#[derive(Decode, Encode, Debug, Clone, Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct TerminalUpdate {
     pub terminal_id: TerminalId,
     /// Escape codes that draw the whole screen (and set its input modes, like application

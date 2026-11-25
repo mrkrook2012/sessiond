@@ -4,7 +4,6 @@
 pub mod client;
 pub mod unit_file;
 
-use bincode_next::{Decode, Encode};
 use color_eyre::eyre::Result;
 
 use crate::backend::session::validate_session_name;
@@ -15,7 +14,7 @@ use crate::backend::session::validate_session_name;
 /// This only guarantees the name is safe to use in file names and unit files. Whether
 /// systemd accepts it, and whether a unit by that name already exists, only systemd can
 /// say: see `SysdClient::ensure_unit_name_free`, which is asked before a service is made.
-#[derive(Debug, Clone, Eq, Hash, PartialEq, Encode, Decode)]
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
 pub struct UnitName(String);
 
 impl UnitName {

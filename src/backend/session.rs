@@ -63,11 +63,9 @@ impl Sessions {
     }
 
     /// The first of `session-1`, `session-2`, ... that no session uses yet.
+    /// A random human readable name (`banana-harbor`) that no session uses.
     pub fn free_default_name(&self) -> String {
-        (1..)
-            .map(|n| format!("session-{n}"))
-            .find(|name| !self.name_exists(name))
-            .expect("some session-N name is free")
+        crate::names::random_name(|name| self.name_exists(name))
     }
 
     pub fn create_ephemeral(&mut self, windows: Vec<WindowId>, name: String) -> Result<SessionId> {

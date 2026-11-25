@@ -6,4 +6,5 @@
 mod backend;
 mod cli;
 mod ids;
+mod names;
 mod support;

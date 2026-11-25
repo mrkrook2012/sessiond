@@ -133,12 +133,8 @@ impl Drop for Harness {
     fn drop(&mut self) {
         eprintln!("Test daemon logs:");
 
-        for file in ["daemon.log"] {
-            let path = self.dir.path().join(file);
-
-            if let Ok(contents) = fs::read_to_string(path) {
-                eprintln!("--- {file} ---\n{contents}");
-            }
+        if let Ok(contents) = fs::read_to_string(self.dir.path().join("daemon.log")) {
+            eprintln!("--- daemon.log ---\n{contents}");
         }
 
         let _ = self.raw(&["daemon", "stop"]);

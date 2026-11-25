@@ -42,7 +42,7 @@ pub async fn run() -> Result<()> {
         files
     );
 
-    info!(pid = std::process::id(), "Starting daemon");
+    info!(target: crate::logging::STARTUP, version = crate::VERSION, pid = std::process::id(), "Starting daemon");
 
     // Pick up sysd sessions that exist on disk but were never started by this daemon.
     // A failure here should not keep the daemon from starting.
@@ -387,7 +387,7 @@ impl Daemon {
             // The enabled state is filled in by the systemd event watcher once it connects.
             match self.runtime.add_stopped_sysd_session(stored.unit.clone(), false) {
                 Ok(_) => registered += 1,
-                Err(e) => warn!("Skipping stored sysd session '{}': {e}", stored.unit),
+                Err(e) => warn!("Skipping stored sysd session '{}': {e:#}", stored.unit),
             }
         }
 

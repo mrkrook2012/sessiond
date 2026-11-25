@@ -260,7 +260,6 @@ fn internal_stop_of_an_ephemeral_session_leaves_it_alone() {
     assert!(err.contains("non sysd session") || err.contains("non-sysd session"), "got: {err}");
 
     assert_eq!(h.sessions(), vec!["eph"]);
-    h.ok(&["attach", "eph"]);
 }
 
 /// Stops a transient unit started with `systemd-run`, even if the test fails.

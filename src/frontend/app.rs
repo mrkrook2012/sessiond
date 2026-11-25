@@ -1,5 +1,3 @@
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -76,7 +74,8 @@ enum Command {
     ListSessions,
     CreateSession {
         working_dir: String,
-        name: String,
+        /// `None`: the daemon picks a random name.
+        name: Option<String>,
     },
     OpenSession {
         id: SessionId,
@@ -154,12 +153,16 @@ struct AppState {
     // UpdateScreenSize on every coalesced resize event. Also doubles as
     // the size new/resized terminal widgets get created/resized to.
     last_sent_size: (u16, u16),
+    /// Started with `attach <name>`: the TUI shows only that session, and quits when it
+    /// is detached from or closed instead of going back to the session list.
+    attached: bool,
 }
 
 impl AppState {
-    fn new(initial_rows: u16, initial_cols: u16) -> Self {
+    fn new(initial_rows: u16, initial_cols: u16, attached: bool) -> Self {
         Self {
-            screen: Screen::SessionList,
+            // Attached: straight to the (still loading) session, never the list.
+            screen: if attached { Screen::Terminal } else { Screen::SessionList },
             sessions: Vec::new(),
             session_list_index: 0,
             current_session: None,
@@ -171,6 +174,7 @@ impl AppState {
             notice: None,
             should_quit: false,
             last_sent_size: (initial_rows, initial_cols),
+            attached,
         }
     }
 
@@ -310,6 +314,9 @@ impl AppState {
                 self.screen = Screen::SessionList;
                 self.status = "Session closed".to_owned();
                 self.sync_terminal();
+                if self.attached {
+                    self.should_quit = true;
+                }
             }
             _ => {}
         }
@@ -330,10 +337,6 @@ impl AppState {
             self.sync_terminal();
         }
     }
-}
-
-fn log_line(log: &mut std::fs::File, msg: impl AsRef<str>) {
-    let _ = writeln!(log, "{}", msg.as_ref());
 }
 
 /// The vertical split shared by both screens: a 3-row top bar, a flexible
@@ -412,7 +415,7 @@ async fn run_terminal_poller(client: Arc<DaemonClient>, state: Arc<Mutex<AppStat
                 }
             }
             Err(e) => {
-                state.lock().unwrap().status = format!("Error: {e}");
+                state.lock().unwrap().status = format!("Error: {e:#}");
                 tokio::time::sleep(POLL_ERROR_BACKOFF).await;
             }
         }
@@ -426,20 +429,12 @@ async fn run_worker(
     state: Arc<Mutex<AppState>>,
     mut rx: UnboundedReceiver<Command>,
 ) {
-    let mut log = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("frontend_worker.log")
-        .ok();
-
     while let Some(cmd) = rx.recv().await {
         if let Err(e) = handle_command(&client, &state, cmd).await {
-            if let Some(log) = log.as_mut() {
-                log_line(log, format!("command error: {e:?}"));
-            }
+            tracing::warn!("Command failed: {e:#}");
             // Show errors in the status line rather than eprint!, which
             // would scribble over the TUI.
-            state.lock().unwrap().status = format!("Error: {e}");
+            state.lock().unwrap().status = format!("Error: {e:#}");
         }
     }
 }
@@ -458,7 +453,7 @@ async fn handle_command(
         Command::CreateSession { working_dir, name } => {
             let before: Vec<SessionId> =
                 state.lock().unwrap().sessions.iter().map(|s| s.id).collect();
-            let sessions = client.create_session(working_dir, None, Some(name)).await?;
+            let sessions = client.create_session(working_dir, None, name).await?;
             // The RPC only returns the list: the new session is the one that was not there before.
             let newest = new_session(&before, &sessions);
             state.lock().unwrap().apply_session_list(sessions);
@@ -538,7 +533,7 @@ async fn handle_command(
             let mut st = state.lock().unwrap();
             let message = match result {
                 Ok(path) => format!("Saved layout of service '{name}' to {}", path.display()),
-                Err(e) => format!("Error: {e}"),
+                Err(e) => format!("Error: {e:#}"),
             };
             st.status = message.clone();
             st.notice = Some(message);
@@ -585,7 +580,10 @@ fn write_terminal(st: &AppState, tx: &UnboundedSender<Command>, data: Vec<u8>) {
 /// Must be called from within a tokio runtime (e.g. `#[tokio::main]`). The
 /// blocking crossterm UI loop runs on `spawn_blocking`, so it never stalls
 /// the runtime's workers.
-pub async fn run_frontend() -> Result<()> {
+///
+/// With `attach`, the TUI opens that session right away and quits when the user detaches
+/// or the session closes, like `tmux attach`. Without it, it starts on the session list.
+pub async fn run_frontend(attach: Option<SessionId>) -> Result<()> {
     // The directory the frontend was launched from. Used as the target
     // directory for "export session to file". Captured up front, before
     // we touch the terminal, so a failure here can't leave it in raw mode.
@@ -593,11 +591,7 @@ pub async fn run_frontend() -> Result<()> {
 
     let backend = CrosstermBackend::new(std::io::stdout());
     let mut terminal = Terminal::new(backend)?;
-    let mut log = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("frontend.log")?;
-    log_line(&mut log, "Starting Frontend");
+    tracing::info!(target: crate::logging::STARTUP, version = crate::VERSION, "Starting frontend");
 
     // Figure out the real terminal-pane size *before* we say Start, so the
     // server sizes the very first PTY correctly instead of us resizing it
@@ -612,7 +606,7 @@ pub async fn run_frontend() -> Result<()> {
     // connection failure prints a normal error instead of leaving the
     // terminal in a broken state.
     let client = Arc::new(connect_and_start(start_rows, start_cols).await?);
-    log_line(&mut log, "Connected to daemon");
+    tracing::info!("Connected to daemon");
 
     enable_raw_mode()?;
     // Mouse capture delivers wheel events (for scrolling the history) instead of letting
@@ -624,8 +618,12 @@ pub async fn run_frontend() -> Result<()> {
     // list never shows leftover terminal output underneath it.
     terminal.clear()?;
 
-    let state = Arc::new(Mutex::new(AppState::new(start_rows, start_cols)));
+    let state = Arc::new(Mutex::new(AppState::new(start_rows, start_cols, attach.is_some())));
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<Command>();
+    if let Some(id) = attach {
+        // Queued first, so it is the first thing the worker does.
+        let _ = cmd_tx.send(Command::OpenSession { id });
+    }
 
     tokio::spawn(run_worker(client.clone(), state.clone(), cmd_rx));
     tokio::spawn(run_terminal_poller(client.clone(), state.clone()));
@@ -692,11 +690,11 @@ pub async fn run_frontend() -> Result<()> {
                                 KeyCode::Enter => {
                                     let name = std::mem::take(text);
                                     st.input_mode = InputMode::Normal;
-                                    if !name.is_empty() {
-                                        let working_dir = std::env::var("HOME")
-                                            .unwrap_or_else(|_| "/tmp".to_owned());
-                                        send(Command::CreateSession { working_dir, name });
-                                    }
+                                    // An empty name gets a random one, like `run` without --name.
+                                    let name = Some(name.trim().to_owned()).filter(|n| !n.is_empty());
+                                    let working_dir = std::env::var("HOME")
+                                        .unwrap_or_else(|_| "/tmp".to_owned());
+                                    send(Command::CreateSession { working_dir, name });
                                 }
                                 KeyCode::Backspace => {
                                     text.pop();
@@ -838,6 +836,10 @@ pub async fn run_frontend() -> Result<()> {
                                 // session list)
                                 KeyCode::Char('d') => {
                                     send(Command::ExitSession);
+                                    // Attached to one session: detaching ends the TUI.
+                                    if st.attached {
+                                        st.should_quit = true;
+                                    }
                                     st.screen = Screen::SessionList;
                                     st.current_session = None;
                                     st.current_window_index = 0;
@@ -1069,6 +1071,14 @@ pub async fn run_frontend() -> Result<()> {
     // Always restore the terminal, even if the UI loop failed or panicked.
     disable_raw_mode()?;
     execute!(std::io::stdout(), DisableMouseCapture, Show, LeaveAlternateScreen)?;
+
+    // The worker may not have got to a queued ExitSession before the UI quit; tell the
+    // daemon directly that nobody is looking at the session any more.
+    if attach.is_some()
+        && let Err(e) = client.exit_session().await
+    {
+        tracing::warn!("Failed to leave the session: {e:#}");
+    }
     ui_result??;
     Ok(())
 }
@@ -1190,7 +1200,7 @@ fn draw_session_list(frame: &mut ratatui::Frame, area: Rect, st: &AppState) {
     frame.render_widget(title, chunks[0]);
 
     if let InputMode::NewSessionName(text) = &st.input_mode {
-        let input = Paragraph::new(format!("New session name: {text}_"))
+        let input = Paragraph::new(format!("New session name (empty for a random one): {text}_"))
             .block(Block::default().borders(Borders::ALL).title("New Session"));
         frame.render_widget(input, chunks[1]);
     } else {

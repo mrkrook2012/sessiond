@@ -78,7 +78,7 @@ impl SessionStore {
             let yaml = match self.files.load(&path) {
                 Ok(yaml) => yaml,
                 Err(e) => {
-                    warn!("Skipping {}: failed to parse ({e})", path.display());
+                    warn!("Skipping {}: failed to parse ({e:#})", path.display());
                     continue;
                 }
             };
@@ -86,7 +86,7 @@ impl SessionStore {
             let unit = match UnitName::new(&yaml.name) {
                 Ok(unit) => unit,
                 Err(e) => {
-                    warn!("Skipping {}: invalid unit name ({e})", path.display());
+                    warn!("Skipping {}: invalid unit name ({e:#})", path.display());
                     continue;
                 }
             };

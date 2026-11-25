@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-pub const VERSION: f32 = 0.00;
 pub const DEFAULT_SOCKET_PATH: &str = "/tmp/sessiond.sock";
 pub const SOCKET_ENV_VAR: &str = "SESSIOND_SOCKET";
 

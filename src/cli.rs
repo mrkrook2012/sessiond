@@ -4,6 +4,7 @@ use color_eyre::eyre::eyre;
 use tracing::info;
 
 use std::fs;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -19,7 +20,7 @@ use crate::ipc::protocol::{SessionInfo, SessionLookup, SysdAction, SysdWaitStatu
 
 #[derive(Parser)]
 #[command(name = "sessiond")]
-#[command(about = "A daemon and terminal manager")]
+#[command(about = "A daemon and terminal manager", version)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -58,8 +59,7 @@ pub enum Commands {
         #[arg(long)]
         services: bool,
     },
-    // TODO Fix this
-    /// Attaches to an existing session by name
+    /// Opens the TUI attached to one session; detaching (Ctrl-b d) exits
     Attach { name: String },
     /// Kills a session by name, or all sessions with --all
     Kill {
@@ -151,7 +151,7 @@ pub async fn dispatch(command: Commands) -> Result<()> {
             command,
         } => handle_run(sysd, name, command).await,
         Commands::List { names, services } => handle_list_sessions(names, services).await,
-        Commands::Attach { name } => handle_attach_session(name).await,
+        Commands::Attach { .. } => Err(eyre!("`attach` must be handled by the caller")),
         Commands::Kill { name, all } => match (name, all) {
             (_, true) => handle_kill_all_sessions().await,
             (Some(name), false) => handle_kill_session(name).await,
@@ -178,9 +178,13 @@ pub async fn dispatch(command: Commands) -> Result<()> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-pub fn generate_random_name() -> String {
-    let names = ["henk", "bink", "aardappel", "piet", "jannes"];
-    names[rand::random_range(0..names.len())].to_string()
+/// A random human readable name (`banana-harbor`) that none of `sessions` uses.
+pub fn generate_random_name(sessions: &[SessionInfo]) -> String {
+    crate::names::random_name(|name| {
+        sessions
+            .iter()
+            .any(|session| session.name.eq_ignore_ascii_case(name))
+    })
 }
 
 /// Quote a single argument so a shell reads it back as one word.
@@ -312,7 +316,10 @@ async fn handle_run(sysd: bool, name: Option<String>, command: Vec<String>) -> R
     ensure_daemon_running().await?;
     let rpc = connect().await?;
 
-    let name = name.unwrap_or_else(generate_random_name);
+    let name = match name {
+        Some(name) => name,
+        None => generate_random_name(&list_sessions(&rpc).await?),
+    };
     let command = command_line(&command);
 
     // The daemon has its own working directory, so send ours explicitly.
@@ -333,10 +340,11 @@ async fn handle_run(sysd: bool, name: Option<String>, command: Vec<String>) -> R
         let (id, _) = find_session(&rpc, &name).await?;
         rpc.execute_sysd_action(id, SysdAction::Start).await?;
     } else {
-        rpc.create_session(working_dir, Some(command), Some(name))
+        rpc.create_session(working_dir, Some(command), Some(name.clone()))
             .await?;
     }
 
+    println!("Started {kind} '{name}'");
     Ok(())
 }
 
@@ -373,18 +381,30 @@ async fn handle_list_sessions(names_only: bool, services_only: bool) -> Result<(
     Ok(())
 }
 
-async fn handle_attach_session(name: String) -> Result<()> {
+/// The session `attach <name>` opens. Checked before the TUI takes over the terminal,
+/// so a typo or a stopped service is reported as a normal error.
+pub async fn resolve_attach_target(name: &str) -> Result<SessionId> {
     let rpc = connect().await?;
-    let (id, _) = find_session(&rpc, &name).await?;
+    let (id, name) = find_session(&rpc, name).await?;
 
-    let session_info = rpc.open_session(id).await?;
+    let stopped = list_sessions(&rpc)
+        .await?
+        .into_iter()
+        .find(|session| session.id == id)
+        .and_then(|session| session.sysd_data)
+        .is_some_and(|sysd| !sysd.running);
+    if stopped {
+        return Err(eyre!(
+            "Service '{name}' is stopped. Start it with `{} service start {name}`",
+            env!("CARGO_PKG_NAME")
+        ));
+    }
 
-    println!(
-        "Attached to session: {} (window with terminal running)",
-        session_info.name
-    );
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        return Err(eyre!("`attach` needs a terminal to show session '{name}' in"));
+    }
 
-    Ok(())
+    Ok(id)
 }
 
 async fn handle_kill_session(name: String) -> Result<()> {

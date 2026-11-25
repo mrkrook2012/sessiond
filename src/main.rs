@@ -1,6 +1,9 @@
 use clap::Parser;
 use color_eyre::Result;
 use std::fs;
+use tracing::level_filters::LevelFilter;
+
+use sessiond::ids::SessionId;
 
 use sessiond::ipc::consts::socket_path;
 use sessiond::{backend, cli, frontend, logging};
@@ -23,23 +26,31 @@ async fn main() -> Result<()> {
                 Err(e) => tracing::error!("Daemon failed: {e:#}"),
             }
         }
+        Some(cli::Commands::Attach { name }) => {
+            // Resolve the name before the TUI owns the terminal, so errors print normally.
+            let session = cli::resolve_attach_target(&name).await?;
+            run_tui(cli.verbose.tracing_level_filter(), Some(session)).await?;
+        }
         // Every other subcommand is handled by the cli module.
         Some(command) => {
             logging::init(cli.verbose.tracing_level_filter());
             cli::dispatch(command).await?;
         }
-        None => {
-            // The TUI owns the terminal, so it logs to a file instead of stderr.
-            // The daemon it starts gets the same log level.
-            let log_path = logging::init_file(cli.verbose.tracing_level_filter(), logging::FRONTEND_LOG)?;
-
-            cli::ensure_daemon_running().await?;
-            if let Err(e) = frontend::app::run_frontend().await {
-                tracing::error!("Frontend failed: {e:#}");
-                return Err(e.wrap_err(format!("See {}", log_path.display())));
-            }
-        }
+        None => run_tui(cli.verbose.tracing_level_filter(), None).await?,
     }
 
+    Ok(())
+}
+
+/// Runs the TUI, attached to `session` if given. The TUI owns the terminal, so it logs to
+/// a file instead of stderr; the daemon it starts gets the same log level.
+async fn run_tui(level: LevelFilter, session: Option<SessionId>) -> Result<()> {
+    let log_path = logging::init_file(level, logging::FRONTEND_LOG)?;
+
+    cli::ensure_daemon_running().await?;
+    if let Err(e) = frontend::app::run_frontend(session).await {
+        tracing::error!("Frontend failed: {e:#}");
+        return Err(e.wrap_err(format!("See {}", log_path.display())));
+    }
     Ok(())
 }

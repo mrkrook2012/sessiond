@@ -7,6 +7,8 @@ use sessiond::cli::{
     Cli, Commands, DaemonCommands, ServiceCommands, command_line, generate_random_name, session_name_from_config, session_not_found_message,
     shell_join, shell_quote,
 };
+use sessiond::ids::{Guid, SessionId};
+use sessiond::ipc::protocol::SessionInfo;
 use tracing::level_filters::LevelFilter;
 
 fn parse(args: &[&str]) -> Result<Cli, ErrorKind> {
@@ -235,13 +237,14 @@ fn several_arguments_are_passed_on_exactly() {
 }
 
 #[test]
-fn generated_names_come_from_the_fixed_list() {
-    for _ in 0..50 {
-        let name = generate_random_name();
-        assert!(
-            ["henk", "bink", "aardappel", "piet", "jannes"].contains(&name.as_str()),
-            "unexpected name {name}"
-        );
+fn generated_names_avoid_existing_sessions_case_insensitively() {
+    let taken = generate_random_name(&[]);
+    assert_eq!(taken.matches('-').count(), 1, "got {taken}");
+
+    // An existing session with the same name in another case still counts as taken.
+    let existing = SessionInfo::new(SessionId(Guid::from_u128(1)), taken.to_uppercase(), vec![], None);
+    for _ in 0..200 {
+        assert_ne!(generate_random_name(std::slice::from_ref(&existing)), taken);
     }
 }
 

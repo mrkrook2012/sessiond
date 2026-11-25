@@ -76,15 +76,15 @@ fn ephemeral_session_starts_with_one_window() {
 }
 
 #[test]
-fn ephemeral_sessions_without_a_name_get_free_default_names() {
+fn ephemeral_sessions_without_a_name_get_distinct_random_names() {
     let (mut runtime, _events) = runtime();
     runtime.create_ephemeral_session("/tmp".into(), None, None).unwrap();
-    assert_eq!(runtime.all_session_info()[0].name, "session-1");
-
     runtime.create_ephemeral_session("/tmp".into(), None, None).unwrap();
-    let mut names: Vec<_> = runtime.all_session_info().into_iter().map(|s| s.name).collect();
-    names.sort();
-    assert_eq!(names, vec!["session-1", "session-2"]);
+
+    let names: Vec<_> = runtime.all_session_info().into_iter().map(|s| s.name).collect();
+    assert_eq!(names.len(), 2);
+    assert_ne!(names[0], names[1]);
+    assert!(names.iter().all(|name| name.matches('-').count() == 1), "got {names:?}");
 }
 
 #[test]

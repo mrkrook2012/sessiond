@@ -10,28 +10,27 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use bincode_next::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 /// A session: a named group of windows, ephemeral or backed by a systemd unit.
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, Encode, Decode, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct SessionId(pub Guid);
 
 /// A window of a session. Every window shows exactly one terminal.
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, Encode, Decode, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct WindowId(pub Guid);
 
 /// A terminal: a PTY with a shell in it.
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, Encode, Decode, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct TerminalId(pub Guid);
 
 /// Identifies one start of a sysd session, so a waiter from a previous run
 /// never mistakes the next run's state for its own.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Encode, Decode, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct RunId(pub Guid);
 
 /// A random (version 4) UUID.
-#[derive(Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, Encode, Decode, Serialize, Deserialize)]
+#[derive(Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct Guid(u128);
 
 impl Guid {

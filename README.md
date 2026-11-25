@@ -46,9 +46,9 @@ sessions.
 
 | Command                               | Description                                                                                                                                                                        |
 | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `run [--sysd] [-n NAME] <command>...` | Start a new session running `<command>`. With `--sysd` (alias `--systemd`) it becomes a systemd service instead of an ephemeral session. Without `--name` a random name is picked. |
+| `run [--sysd] [-n NAME] <command>...` | Start a new session running `<command>`. With `--sysd` (alias `--systemd`) it becomes a systemd service instead of an ephemeral session. Without `--name` it gets a random name like `banana-harbor`, which is printed. |
 | `list [--names] [--services]`         | List active sessions. `--names` prints names only, one per line; `--services` shows only systemd-backed sessions.                                                                  |
-| `attach <name>`                       | Attach to a session by name.                                                                                                                                                       |
+| `attach <name>`                       | Open the TUI on just that session. Detaching (`Ctrl-b d`) or the session ending exits back to your shell. |
 | `kill <name>`                         | Kill a session.                                                                                                                                                                    |
 | `kill --all`                          | Kill every active session.                                                                                                                                                         |
 

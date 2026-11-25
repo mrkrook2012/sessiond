@@ -84,7 +84,7 @@ impl DaemonService for DaemonRpcServer {
             .lock()
             .await
             .get_wanted_data(terminal_id, scrollback, since)
-            .map_err(|e| e.to_string())
+            .map_err(|e| format!("{e:#}"))
     }
 
     async fn start(self, _: context::Context, rows: u16, cols: u16) {
@@ -107,7 +107,7 @@ impl DaemonService for DaemonRpcServer {
         let mut daemon = self.daemon.lock().await;
         daemon
             .handle_create_session(working_dir, command, name)
-            .map_err(|e| e.to_string())
+            .map_err(|e| format!("{e:#}"))
     }
 
     async fn create_sysd_session(
@@ -124,7 +124,7 @@ impl DaemonService for DaemonRpcServer {
             .lock()
             .await
             .new_service_unit(name.as_deref())
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("{e:#}"))?;
         self.ensure_unit_name_free(&unit).await?;
 
         let sessions = self
@@ -156,7 +156,7 @@ impl DaemonService for DaemonRpcServer {
         let mut daemon = self.daemon.lock().await;
         daemon
             .handle_write(terminal_id, data)
-            .map_err(|e| e.to_string())
+            .map_err(|e| format!("{e:#}"))
     }
 
     async fn list_sessions(self, _: context::Context) -> Vec<SessionInfo> {
@@ -172,19 +172,19 @@ impl DaemonService for DaemonRpcServer {
         let mut daemon = self.daemon.lock().await;
         daemon
             .handle_create_window(id)
-            .map_err(|e| e.to_string())
+            .map_err(|e| format!("{e:#}"))
     }
 
     async fn open_session(self, _: context::Context, id: SessionId) -> Result<SessionInfo, String> {
         let mut daemon = self.daemon.lock().await;
-        daemon.handle_open_session(id).map_err(|e| e.to_string())
+        daemon.handle_open_session(id).map_err(|e| format!("{e:#}"))
     }
 
     async fn change_window(self, _: context::Context, window_id: WindowId) -> Result<(), String> {
         let mut daemon = self.daemon.lock().await;
         daemon
             .handle_change_window(window_id)
-            .map_err(|e| e.to_string())
+            .map_err(|e| format!("{e:#}"))
     }
 
     async fn kill_window(
@@ -196,7 +196,7 @@ impl DaemonService for DaemonRpcServer {
         let mut daemon = self.daemon.lock().await;
         daemon
             .handle_kill_window(id, window_id)
-            .map_err(|e| e.to_string())
+            .map_err(|e| format!("{e:#}"))
     }
 
     async fn export_session_to_sysd(
@@ -209,14 +209,14 @@ impl DaemonService for DaemonRpcServer {
             .lock()
             .await
             .export_unit(id)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("{e:#}"))?;
         self.ensure_unit_name_free(&unit).await?;
 
         self.daemon
             .lock()
             .await
             .handle_export_session(id)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("{e:#}"))?;
         self.reload_sysd().await;
         Ok(())
     }
@@ -229,7 +229,7 @@ impl DaemonService for DaemonRpcServer {
         let mut daemon = self.daemon.lock().await;
         daemon
             .handle_start_session_from_file(file_path)
-            .map_err(|e| e.to_string())
+            .map_err(|e| format!("{e:#}"))
     }
 
     async fn kill_daemon(self, _: context::Context) {
@@ -246,7 +246,7 @@ impl DaemonService for DaemonRpcServer {
         let daemon = self.daemon.lock().await;
         daemon
             .handle_export_session_to_file(id, working_dir)
-            .map_err(|e| e.to_string())
+            .map_err(|e| format!("{e:#}"))
     }
 
     async fn execute_sysd_action(
@@ -260,7 +260,7 @@ impl DaemonService for DaemonRpcServer {
             .lock()
             .await
             .sysd_unit(id)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("{e:#}"))?;
         let sysd = self.sysd()?;
 
         let result = match sysd_action {
@@ -295,7 +295,7 @@ impl DaemonService for DaemonRpcServer {
         let mut daemon = self.daemon.lock().await;
         daemon
             .handle_start_sysd_session_from_file(file_path)
-            .map_err(|e| e.to_string())
+            .map_err(|e| format!("{e:#}"))
     }
 
     async fn wait_sysd_session(
@@ -325,7 +325,7 @@ impl DaemonService for DaemonRpcServer {
         let mut daemon = self.daemon.lock().await;
         daemon
             .handle_stop_sysd_session(id)
-            .map_err(|e| e.to_string())
+            .map_err(|e| format!("{e:#}"))
     }
 
     async fn update_sysd_session(
@@ -337,7 +337,7 @@ impl DaemonService for DaemonRpcServer {
             .lock()
             .await
             .handle_update_sysd_session(id)
-            .map_err(|e| e.to_string())
+            .map_err(|e| format!("{e:#}"))
     }
 
     async fn delete_sysd_session(
@@ -350,7 +350,7 @@ impl DaemonService for DaemonRpcServer {
             .lock()
             .await
             .sysd_delete_target(&name)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("{e:#}"))?;
 
         // Best effort: take the unit out of systemd before its file disappears.
         // Disable needs the unit file to still exist.
@@ -368,7 +368,7 @@ impl DaemonService for DaemonRpcServer {
             .lock()
             .await
             .handle_delete_sysd_session(&unit)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("{e:#}"))?;
 
         if has_unit_file {
             self.reload_sysd().await;

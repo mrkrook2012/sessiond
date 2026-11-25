@@ -109,7 +109,10 @@ fn importing_invalid_yaml_fails_and_creates_nothing() {
     let file = h.dir.path().join("broken.yaml");
     fs::write(&file, "this: is: not: valid").unwrap();
 
-    h.fails(&["import", file.to_str().unwrap()]);
+    let err = h.fails(&["import", file.to_str().unwrap()]);
+    // The whole chain reaches the user: which file, and what the parser said about it.
+    assert!(err.contains("Invalid session file") && err.contains("broken.yaml"), "got: {err}");
+    assert!(err.contains("line 1"), "parser detail missing, got: {err}");
     assert!(h.sessions().is_empty());
 }
 

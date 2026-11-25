@@ -34,6 +34,11 @@ pub const DAEMON_LOG: &str = "daemon.log";
 /// Log file of the TUI.
 pub const FRONTEND_LOG: &str = "frontend.log";
 
+/// Target for the one line a daemon or TUI logs when it starts (with its version). It is
+/// shown at info level even when the rest is not, so every log says which build wrote it.
+/// Use `tracing::info!(target: STARTUP, ...)`.
+pub const STARTUP: &str = "sessiond::startup";
+
 /// The level a daemon spawned by this process should use. Normally the level this
 /// process logs at.
 pub static LEVEL_FOR_CHILDREN: OnceLock<LevelFilter> = OnceLock::new();
@@ -93,10 +98,12 @@ pub fn init_file(level: LevelFilter, name: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// Our own crate at the requested level. Dependencies (tarpc, zbus) are noisy, so they
-/// only show warnings unless asked for with RUST_LOG.
+/// Our own crate at the requested level, plus the startup line (unless logging is off).
+/// Dependencies (tarpc, zbus) are noisy, so they only show warnings unless asked for with
+/// RUST_LOG.
 fn filter(level: LevelFilter) -> EnvFilter {
-    let default_filter = format!("warn,{}={level}", env!("CARGO_CRATE_NAME"));
+    let startup = if level == LevelFilter::OFF { LevelFilter::OFF } else { LevelFilter::INFO };
+    let default_filter = format!("warn,{}={level},{STARTUP}={startup}", env!("CARGO_CRATE_NAME"));
     EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter))
 }
 
